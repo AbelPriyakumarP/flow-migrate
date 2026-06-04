@@ -1,0 +1,21 @@
+Order Processing Workflow using AWS Step Functions
+
+This workflow processes incoming e-commerce orders through the following steps:
+
+1. ValidateOrder - A Lambda function that validates the order details (product ID, quantity, customer info). If validation fails, the workflow should terminate with a "ValidationError".
+
+2. CheckInventory - Query DynamoDB table "ProductInventory" to check if the requested item is in stock. Use the productId from the order as the lookup key.
+
+3. Decision: Is the item in stock?
+   - If quantity > 0: proceed to ProcessPayment
+   - If quantity = 0: go to NotifyOutOfStock
+
+4. ProcessPayment - A Lambda function that charges the customer's payment method. This step should retry 3 times with exponential backoff (2 second interval) on ServiceException errors.
+
+5. ShipOrder - A Lambda function that creates a shipping label and initiates fulfillment. This runs after successful payment.
+
+6. SendConfirmation - An SNS notification sent to the customer confirming their order. This should run in parallel with ShipOrder after payment succeeds.
+
+7. NotifyOutOfStock - Send an SNS notification to the inventory team that an item is out of stock, then fail the workflow with "OutOfStock" error.
+
+The workflow starts with ValidateOrder and should handle errors gracefully with proper catch blocks.
