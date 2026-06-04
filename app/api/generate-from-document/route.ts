@@ -13,7 +13,7 @@ async function extractText(
 
   if (mimeType === "application/pdf") {
     try {
-      // pdf-parse v2 uses class-based API
+      // pdf-parse v2 uses named export PDFParse class
       const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: new Uint8Array(buffer) });
       const textResult = await parser.getText();
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       truncated +
       "\n=== END DOCUMENT ===";
 
-    const models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+    const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
     let result;
     let lastError: unknown;
 
