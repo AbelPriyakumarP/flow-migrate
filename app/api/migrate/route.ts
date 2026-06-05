@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       : "\n\n";
     const userPrompt = basePrompt + correctionBlock + sourceCode;
 
-    const models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+    const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
     let result;
     let lastError: unknown;
 
@@ -58,7 +58,10 @@ export async function POST(request: NextRequest) {
         const response = await genAI.models.generateContent({
           model: modelName,
           contents: userPrompt,
-          config: { systemInstruction: SYSTEM_PROMPT },
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            thinkingConfig: { thinkingBudget: 0 }, // disable thinking for max speed
+          },
         });
         result = response;
         break;

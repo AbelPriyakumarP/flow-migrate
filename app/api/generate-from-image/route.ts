@@ -58,7 +58,10 @@ export async function POST(request: NextRequest) {
               { inlineData: { mimeType, data: imageData } },
             ]},
           ],
-          config: { systemInstruction: SYSTEM_PROMPT },
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         });
         result = response;
         break;

@@ -107,7 +107,10 @@ export async function POST(request: NextRequest) {
         const response = await genAI.models.generateContent({
           model: modelName,
           contents: userPrompt,
-          config: { systemInstruction: SYSTEM_PROMPT },
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         });
         result = response;
         break;
