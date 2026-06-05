@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_PROMPT, IMAGE_ANALYSIS_PROMPT } from "@/lib/prompts";
 import { detectPlatform } from "@/lib/detect-platform";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,11 +50,17 @@ export async function POST(request: NextRequest) {
 
     for (const modelName of models) {
       try {
-        const model = genAI.getGenerativeModel({
+        const response = await genAI.models.generateContent({
           model: modelName,
-          systemInstruction: SYSTEM_PROMPT,
+          contents: [
+            { role: "user", parts: [
+              { text: IMAGE_ANALYSIS_PROMPT },
+              { inlineData: { mimeType, data: imageData } },
+            ]},
+          ],
+          config: { systemInstruction: SYSTEM_PROMPT },
         });
-        result = await model.generateContent(parts);
+        result = response;
         break;
       } catch (e) {
         lastError = e;
@@ -66,7 +72,7 @@ export async function POST(request: NextRequest) {
       throw lastError || new Error("All models failed");
     }
 
-    let generatedCode = result.response.text().trim();
+    let generatedCode = (result.text ?? "").trim();
 
     // Strip code fences if present
     const fenceMatch = generatedCode.match(/```(?:json)?\s*([\s\S]*?)```/);

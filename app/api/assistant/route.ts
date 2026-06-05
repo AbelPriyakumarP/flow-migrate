@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 const ASSISTANT_SYSTEM = `You are FlowMigrate AI Assistant — an expert in AWS Step Functions (ASL) and Azure Logic Apps migration.
 
@@ -94,11 +94,12 @@ export async function POST(request: NextRequest) {
 
     for (const modelName of models) {
       try {
-        const model = genAI.getGenerativeModel({
+        const response = await genAI.models.generateContent({
           model: modelName,
-          systemInstruction: ASSISTANT_SYSTEM,
+          contents: userPrompt,
+          config: { systemInstruction: ASSISTANT_SYSTEM },
         });
-        result = await model.generateContent(userPrompt);
+        result = response;
         break;
       } catch (e) {
         lastError = e;
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
       throw lastError || new Error("All models failed");
     }
 
-    const reply = result.response.text().trim();
+    const reply = (result.text ?? "").trim();
 
     return NextResponse.json({ reply });
   } catch (err: unknown) {
