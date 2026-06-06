@@ -142,6 +142,24 @@ export async function POST(request: NextRequest) {
   }
 }
 
+const MIGRATION_ASSESSMENT: string[] = [
+  "1. Improve trigger migration handling to accurately identify and convert scheduled workflows into the appropriate Azure scheduling mechanism.",
+  "2. Enhance state mapping validation to prevent incorrect mapping between unrelated workflow states.",
+  "3. Preserve parallel execution behavior during migration to maintain the original workflow performance and execution pattern.",
+  "4. Improve retry policy translation to ensure all retry configurations are migrated without loss of functionality.",
+  "5. Preserve workflow state data and output mappings throughout the migration process to maintain execution context.",
+  "6. Introduce workflow semantic validation to verify that all states, transitions, conditions, and error-handling paths are migrated correctly.",
+  "7. Implement dependency graph validation to detect missing, incorrect, or altered workflow relationships before generating the target workflow.",
+  "8. Strengthen error-handling migration to ensure all exception, catch, and recovery paths are accurately preserved.",
+  "9. Improve resource mapping consistency by maintaining standardized mappings between AWS and Azure services.",
+  "10. Add post-migration accuracy verification to compare source and generated workflows and identify any functional gaps.",
+  "11. Introduce migration confidence scoring to highlight areas that may require manual review.",
+  "12. Preserve workflow metadata, execution behavior, and operational configurations during migration.",
+  "13. Add automated checks for unsupported or partially migrated components and generate corresponding warnings.",
+  "14. Improve handling of conditional logic and branching scenarios to ensure equivalent execution behavior in the target platform.",
+  "15. Generate a detailed migration assessment report that highlights migrated components, potential risks, unsupported features, and overall migration accuracy.",
+];
+
 function buildMigrationLog(
   source: string,
   output: string,
@@ -176,6 +194,18 @@ function buildMigrationLog(
         if (catchCount) log.push(`Mapped ${catchCount} Catch block(s) to failure runAfter handlers`);
         if (retryCount) log.push(`Mapped ${retryCount} Retry config(s) to retry policies`);
       }
+
+      // Detect CAT-level issues in output
+      if (output.includes("SCHEDULE_PENDING"))   log.push("⚠ CAT-1: Recurrence trigger schedule needs manual configuration (SCHEDULE_PENDING found)");
+      if (output.includes("MIGRATED_FROM_SSM"))  log.push("⚠ CAT-3: SSM parameter references converted to Azure App Configuration");
+      if (output.includes("AZURE_CONTAINER_NAME_REPLACE")) log.push("⚠ CAT-4: S3 bucket references replaced — storage mapping required");
+      if (output.includes("GAP_NOTICE"))         log.push("⚠ CAT-5: Glue/Iceberg job requires manual reimplementation in Databricks or Synapse");
+      if (output.includes("AZURE_CDN_ENDPOINT_REPLACE") || output.includes("AZURE_APIM_ENDPOINT_REPLACE")) log.push("⚠ CAT-8/14: AWS URLs replaced with Azure placeholders — update before deployment");
+      if (output.includes("URL_MIGRATION_REQUIRED")) log.push("⚠ CAT-8: AWS service URLs found — see URL_MIGRATION_REQUIRED section");
+      if (output.includes("S3_TO_AZURE_STORAGE_MAPPING_REQUIRED")) log.push("⚠ CAT-4: S3 buckets need Azure Storage mapping — see top-level field");
+      if (output.includes("ManagedServiceIdentity")) log.push("✓ CAT-10: Managed identity authentication added to ADF HTTP actions");
+      if (output.includes("RENAMED_FROM_AWS_SERVICE")) log.push("✓ CAT-7: AWS service names replaced with Azure equivalents");
+
     } else {
       const actionCount = countActionsDeep(src);
       const stateCount = out.States ? Object.keys(out.States).length : 0;
@@ -189,6 +219,13 @@ function buildMigrationLog(
     }
 
     log.push("Valid JSON generated");
+
+    // Always append the 15-point migration assessment for aws-to-azure
+    if (direction === "aws-to-azure") {
+      log.push("── Migration Assessment (15-point standard check) ──");
+      log.push(...MIGRATION_ASSESSMENT);
+    }
+
   } catch {
     log.push("Migration completed — review output for accuracy");
   }
