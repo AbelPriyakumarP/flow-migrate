@@ -4,6 +4,7 @@ import { SYSTEM_PROMPT, getPrompt } from "@/lib/prompts";
 import { detectPlatform, getMigrationDirection, type Platform } from "@/lib/detect-platform";
 import { validateAzureLogicApps, validateAWSStepFunctions, type ValidationIssue } from "@/lib/validator";
 import { compareWorkflows } from "@/lib/comparison";
+import { applyMigrationPostProcessing } from "@/lib/migration-post-processor";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -87,7 +88,25 @@ export async function POST(request: NextRequest) {
     let comparison = null;
 
     try {
-      const parsed = JSON.parse(outputCode);
+      let parsed = JSON.parse(outputCode);
+
+      // ── Apply all 15 programmatic post-processing categories ──────────────
+      if (direction === "aws-to-azure") {
+        try {
+          const sourceJson = JSON.parse(sourceCode);
+          const { output: processed, changesApplied } =
+            applyMigrationPostProcessing(parsed, sourceJson);
+          parsed = processed;
+          // Prepend post-processor results to migration log
+          migrationLog = [
+            `Post-processor applied ${changesApplied.filter(c => !c.includes("no issues found")).length} fix(es) across 15 categories`,
+            ...changesApplied,
+          ];
+        } catch {
+          migrationLog = ["Post-processor skipped — source JSON parse error"];
+        }
+      }
+
       outputCode = JSON.stringify(parsed, null, 2);
 
       if (direction === "aws-to-azure") {
@@ -96,7 +115,10 @@ export async function POST(request: NextRequest) {
         validationIssues = validateAWSStepFunctions(parsed);
       }
 
-      migrationLog = buildMigrationLog(sourceCode, outputCode, direction);
+      migrationLog = [
+        ...migrationLog,
+        ...buildMigrationLog(sourceCode, outputCode, direction),
+      ];
 
       // Run behavioral comparison
       try {
