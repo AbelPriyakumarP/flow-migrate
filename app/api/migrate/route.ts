@@ -5,6 +5,7 @@ import { detectPlatform, getMigrationDirection, type Platform } from "@/lib/dete
 import { validateAzureLogicApps, validateAWSStepFunctions, type ValidationIssue } from "@/lib/validator";
 import { compareWorkflows } from "@/lib/comparison";
 import { applyMigrationPostProcessing } from "@/lib/migration-post-processor";
+import { detectApplicableMappings, PRODUCTION_ASSESSMENT_30 } from "@/lib/service-registry";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -164,23 +165,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const MIGRATION_ASSESSMENT: string[] = [
-  "1. Improve trigger migration handling to accurately identify and convert scheduled workflows into the appropriate Azure scheduling mechanism.",
-  "2. Enhance state mapping validation to prevent incorrect mapping between unrelated workflow states.",
-  "3. Preserve parallel execution behavior during migration to maintain the original workflow performance and execution pattern.",
-  "4. Improve retry policy translation to ensure all retry configurations are migrated without loss of functionality.",
-  "5. Preserve workflow state data and output mappings throughout the migration process to maintain execution context.",
-  "6. Introduce workflow semantic validation to verify that all states, transitions, conditions, and error-handling paths are migrated correctly.",
-  "7. Implement dependency graph validation to detect missing, incorrect, or altered workflow relationships before generating the target workflow.",
-  "8. Strengthen error-handling migration to ensure all exception, catch, and recovery paths are accurately preserved.",
-  "9. Improve resource mapping consistency by maintaining standardized mappings between AWS and Azure services.",
-  "10. Add post-migration accuracy verification to compare source and generated workflows and identify any functional gaps.",
-  "11. Introduce migration confidence scoring to highlight areas that may require manual review.",
-  "12. Preserve workflow metadata, execution behavior, and operational configurations during migration.",
-  "13. Add automated checks for unsupported or partially migrated components and generate corresponding warnings.",
-  "14. Improve handling of conditional logic and branching scenarios to ensure equivalent execution behavior in the target platform.",
-  "15. Generate a detailed migration assessment report that highlights migrated components, potential risks, unsupported features, and overall migration accuracy.",
-];
+// 30-point assessment is now imported from service-registry.ts
 
 function buildMigrationLog(
   source: string,
@@ -242,10 +227,21 @@ function buildMigrationLog(
 
     log.push("Valid JSON generated");
 
-    // Always append the 15-point migration assessment for aws-to-azure
+    // Always append the 30-point production assessment for aws-to-azure
     if (direction === "aws-to-azure") {
-      log.push("── Migration Assessment (15-point standard check) ──");
-      log.push(...MIGRATION_ASSESSMENT);
+      // Detect which of the 30 service mappings apply to this specific migration
+      try {
+        const srcJson = JSON.parse(source);
+        const applicable = detectApplicableMappings(JSON.stringify(srcJson));
+        if (applicable.length > 0) {
+          log.push(`── ${applicable.length} service mapping(s) detected in source ──`);
+          applicable.forEach(m => {
+            log.push(`  ${m.requiresManualWork ? "⚠ MANUAL" : "✓ AUTO"} [${m.group}] ${m.awsPattern} → ${m.azureEquivalent}`);
+          });
+        }
+      } catch { /* best-effort */ }
+      log.push("── Production Assessment (30-point standard check) ──");
+      log.push(...PRODUCTION_ASSESSMENT_30);
     }
 
   } catch {

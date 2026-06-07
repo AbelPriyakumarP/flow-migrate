@@ -718,13 +718,432 @@ function cat15ParametersBlock(output: Record<string, unknown>): string[] {
   return changes;
 }
 
+// ─── CAT-16: Bedrock model ID → Azure OpenAI model mapping ───────────────────
+import { BEDROCK_MODEL_MAP } from "./service-registry";
+
+function cat16BedrockModelMapping(output: Record<string, unknown>): string[] {
+  const changes: string[] = [];
+  let count = 0;
+
+  const replaced = walkStrings(output, (value) => {
+    for (const [awsModel, azureModel] of Object.entries(BEDROCK_MODEL_MAP)) {
+      if (value.toLowerCase().includes(awsModel.toLowerCase())) {
+        count++;
+        return value.replace(new RegExp(awsModel.replace(".", "\\."), "gi"), azureModel);
+      }
+    }
+    return value;
+  }) as Record<string, unknown>;
+
+  if (count > 0) {
+    Object.assign(output, replaced);
+    changes.push(`CAT-16: ${count} Bedrock model ID(s) translated to Azure OpenAI / Foundry equivalents`);
+  }
+  return changes;
+}
+
+// ─── CAT-17: DynamoDB stream → Cosmos DB change feed marker ──────────────────
+function cat17DynamoStreamTrigger(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasDynamoStream = /EventSourceMapping.*dynamodb|dynamodb.*stream|DynamoDBStreamTrigger/i.test(sourceStr);
+  if (!hasDynamoStream) return changes;
+
+  const triggers = output.triggers as Record<string, unknown> | undefined;
+  if (triggers) {
+    for (const [name, t] of Object.entries(triggers)) {
+      const trigger = t as Record<string, unknown>;
+      if (trigger.type === "Request" || trigger.type === "Recurrence") {
+        (trigger as Record<string, unknown>)["_CAT17_DYNAMO_STREAM"] =
+          "MIGRATION_NOTE: Source had DynamoDB Stream EventSourceMapping. " +
+          "Replace this trigger with a Cosmos DB Change Feed trigger binding. " +
+          "Enable change feed on the Cosmos DB container that replaced DynamoDB. " +
+          "Pattern: CosmosDBChangeFeedTrigger → azure_pattern: BlobStorageEventGridTrigger";
+        changes.push(`CAT-17: DynamoDB stream trigger detected — Cosmos DB change feed marker added to trigger '${name}'`);
+      }
+    }
+  }
+  return changes;
+}
+
+// ─── CAT-18: Kinesis → Event Hubs mapping ────────────────────────────────────
+const KINESIS_REPLACEMENTS: [RegExp, string][] = [
+  [/kinesis\.amazonaws\.com/gi, "eventhubs.windows.net"],
+  [/aws:kinesis/gi, "azure:eventhubs"],
+  [/"KinesisStream"/gi, '"EventHub"'],
+  [/StartingPosition.*TRIM_HORIZON/gi, "InitialOffsetDateTime: earliest"],
+  [/StartingPosition.*LATEST/gi, "InitialOffsetDateTime: latest"],
+];
+
+function cat18KinesisToEventHubs(output: Record<string, unknown>): string[] {
+  const changes: string[] = [];
+  let count = 0;
+
+  const replaced = walkStrings(output, (value) => {
+    let v = value;
+    for (const [pattern, replacement] of KINESIS_REPLACEMENTS) {
+      if (pattern.test(v)) { v = v.replace(pattern, replacement); count++; }
+      pattern.lastIndex = 0;
+    }
+    return v;
+  }) as Record<string, unknown>;
+
+  if (count > 0) {
+    Object.assign(output, replaced);
+    changes.push(`CAT-18: ${count} Kinesis reference(s) translated to Azure Event Hubs`);
+  }
+  return changes;
+}
+
+// ─── CAT-19: S3 event notification → Blob Storage + Event Grid marker ─────────
+function cat19S3EventTrigger(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasS3Event = /s3:ObjectCreated|NotificationConfiguration.*Lambda|S3EventNotification/i.test(sourceStr);
+  if (!hasS3Event) return changes;
+
+  const triggers = output.triggers as Record<string, unknown> | undefined;
+  if (triggers) {
+    for (const [name, t] of Object.entries(triggers)) {
+      const trigger = t as Record<string, unknown>;
+      if (trigger.type === "Request") {
+        (trigger as Record<string, unknown>)["_CAT19_S3_EVENT"] =
+          "MIGRATION_NOTE: Source had S3 event notification trigger. " +
+          "Replace with: (1) Azure Storage Account with Event Grid system topic, " +
+          "(2) Event Grid event subscription filtering on Microsoft.Storage.BlobCreated, " +
+          "(3) Azure Function with Event Grid trigger binding. " +
+          "Pattern: S3EventNotificationTrigger → BlobStorageEventGridTrigger";
+        changes.push(`CAT-19: S3 event notification detected — Event Grid/Blob Storage trigger marker added to '${name}'`);
+      }
+    }
+  }
+  return changes;
+}
+
+// ─── CAT-20: KMS ARN references → Key Vault ──────────────────────────────────
+function cat20KmsToKeyVault(output: Record<string, unknown>): string[] {
+  const changes: string[] = [];
+  let count = 0;
+
+  const replaced = walkStrings(output, (value) => {
+    if (/arn:aws:kms/i.test(value)) {
+      count++;
+      return value.replace(/arn:aws:kms:[a-z0-9-]+:[0-9]+:key\/[a-z0-9-]+/gi,
+        "https://KEYVAULT_NAME_REPLACE.vault.azure.net/keys/KEY_NAME_REPLACE/KEY_VERSION_REPLACE");
+    }
+    if (/kms:key\//i.test(value)) {
+      count++;
+      return "AZURE_KEYVAULT_KEY_URI_REPLACE";
+    }
+    return value;
+  }) as Record<string, unknown>;
+
+  if (count > 0) {
+    Object.assign(output, replaced);
+    changes.push(`CAT-20: ${count} KMS key ARN(s) replaced with Azure Key Vault key URI placeholders`);
+  }
+  return changes;
+}
+
+// ─── CAT-21: Cognito references → Entra B2C ──────────────────────────────────
+const COGNITO_REPLACEMENTS: [RegExp, string][] = [
+  [/cognito-idp\.[a-z0-9-]+\.amazonaws\.com/gi, "login.microsoftonline.com/{tenantId}/v2.0"],
+  [/cognito\.amazonaws\.com/gi, "login.microsoftonline.com"],
+  [/UserPoolId/gi, "EntraB2CTenantId"],
+  [/ClientId.*cognito/gi, "ApplicationClientId"],
+  [/cognito:username/gi, "preferred_username"],
+  [/cognito:groups/gi, "groups"],
+];
+
+function cat21CognitoToEntraB2C(output: Record<string, unknown>): string[] {
+  const changes: string[] = [];
+  let count = 0;
+
+  const replaced = walkStrings(output, (value) => {
+    let v = value;
+    for (const [pattern, replacement] of COGNITO_REPLACEMENTS) {
+      if (pattern.test(v)) { v = v.replace(pattern, replacement); count++; }
+      pattern.lastIndex = 0;
+    }
+    return v;
+  }) as Record<string, unknown>;
+
+  if (count > 0) {
+    Object.assign(output, replaced);
+    changes.push(`CAT-21: ${count} Cognito reference(s) translated to Entra B2C. NOTE: user passwords cannot be migrated.`);
+  }
+  return changes;
+}
+
+// ─── CAT-22: X-Ray → Application Insights ────────────────────────────────────
+function cat22XRayToAppInsights(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasXRay = /TracingConfig.*Active|TracingEnabled.*true|aws:xray|X-Ray/i.test(sourceStr);
+  if (!hasXRay) return changes;
+
+  const params = output.parameters as Record<string, unknown>;
+  if (params && !params["appInsightsConnectionString"]) {
+    params["appInsightsConnectionString"] = {
+      type: "String",
+      defaultValue: "",
+      metadata: {
+        description: "Application Insights connection string — replacing AWS X-Ray tracing",
+      },
+    };
+    changes.push("CAT-22: X-Ray tracing detected — appInsightsConnectionString parameter added (set APPLICATIONINSIGHTS_CONNECTION_STRING in Function App)");
+  }
+  return changes;
+}
+
+// ─── CAT-23: CloudWatch Alarm → Azure Monitor alert marker ───────────────────
+function cat23CloudWatchAlarms(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const alarmMatches = [...sourceStr.matchAll(/"AWS::CloudWatch::Alarm"/g)];
+  if (alarmMatches.length === 0) return changes;
+
+  output["_CAT23_CLOUDWATCH_ALARMS"] = {
+    _note: `MIGRATION_REQUIRED: Found ${alarmMatches.length} CloudWatch Alarm(s) in source. ` +
+      "Generate Azure Monitor metric alert rules for each. " +
+      "Map: Namespace+MetricName → Azure metric; Threshold → direct; " +
+      "Period+EvaluationPeriods → window size; AlarmActions SNS → Azure Monitor action group.",
+    alarm_count: alarmMatches.length,
+    azure_resource: "Microsoft.Insights/metricAlerts",
+  };
+  changes.push(`CAT-23: ${alarmMatches.length} CloudWatch Alarm(s) detected — Azure Monitor alert rule generation required`);
+  return changes;
+}
+
+// ─── CAT-24: GuardDuty → Defender for Cloud ──────────────────────────────────
+function cat24GuardDutyToDefender(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasGuardDuty = /GuardDuty|AWS::GuardDuty/i.test(sourceStr);
+  if (!hasGuardDuty) return changes;
+
+  const hasEC2   = /AWS::EC2|Lambda/i.test(sourceStr);
+  const hasEKS   = /AWS::EKS|ECS/i.test(sourceStr);
+  const hasS3    = /AWS::S3/i.test(sourceStr);
+  const hasRDS   = /AWS::RDS|DynamoDB/i.test(sourceStr);
+
+  output["_CAT24_DEFENDER_FOR_CLOUD"] = {
+    _note: "MIGRATION_REQUIRED: Source had GuardDuty. Enable Microsoft Defender for Cloud plans:",
+    enable_defender_for_servers:   hasEC2,
+    enable_defender_for_containers: hasEKS,
+    enable_defender_for_storage:   hasS3,
+    enable_defender_for_databases: hasRDS,
+    enable_sentinel: true,
+    sentinel_connectors: ["Azure Activity", "Microsoft Defender for Cloud"],
+    azure_resources: [
+      "Microsoft.Security/pricings",
+      "Microsoft.OperationalInsights/workspaces (Sentinel)",
+    ],
+  };
+  changes.push("CAT-24: GuardDuty detected — Defender for Cloud + Sentinel configuration block added");
+  return changes;
+}
+
+// ─── CAT-25: VPC → VNet marker ────────────────────────────────────────────────
+function cat25VpcToVnet(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasVpc = /AWS::EC2::VPC|CidrBlock|AWS::EC2::Subnet|AWS::EC2::SecurityGroup/i.test(sourceStr);
+  if (!hasVpc) return changes;
+
+  output["_CAT25_VPC_MIGRATION_REQUIRED"] = {
+    _note: "MIGRATION_REQUIRED: Source contained VPC resources.",
+    actions_required: [
+      "Generate Azure Virtual Network with VPC CIDR as address space",
+      "Generate Azure Subnets from AWS::EC2::Subnet resources",
+      "Generate Azure NSGs from AWS::EC2::SecurityGroup (translate protocol/port rules)",
+      "Generate Private Endpoints from VPCEndpoint Interface type",
+      "Generate Service Endpoints from VPCEndpoint Gateway type",
+      "Mark all CIDR blocks as VERIFY_CIDR_NO_OVERLAP before deployment",
+    ],
+    azure_resources: [
+      "Microsoft.Network/virtualNetworks",
+      "Microsoft.Network/networkSecurityGroups",
+      "Microsoft.Network/privateEndpoints",
+    ],
+  };
+  changes.push("CAT-25: VPC/Subnet/SecurityGroup detected — VNet migration block added");
+  return changes;
+}
+
+// ─── CAT-26: API Gateway → APIM marker ───────────────────────────────────────
+function cat26ApiGatewayToApim(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasApiGw = /AWS::ApiGateway::RestApi|AWS::ApiGatewayV2::Api|execute-api/i.test(sourceStr);
+  if (!hasApiGw) return changes;
+
+  output["_CAT26_APIM_REQUIRED"] = {
+    _note: "MIGRATION_REQUIRED: Source had API Gateway. Generate Azure API Management.",
+    mapping: {
+      "API Gateway stage":         "APIM API version",
+      "API Gateway method":        "APIM operation (same HTTP verb + path)",
+      "Lambda integration":        "APIM backend → Azure Function HTTP forward",
+      "Usage plans / API keys":    "APIM subscription keys + throttling policies",
+      "Lambda authoriser":         "APIM validate-jwt policy (Azure AD token endpoint)",
+      "WAF WebACL":                "APIM + Azure WAF policy",
+    },
+    critical_note: "APIM requires minimum 30 minutes to provision — create before Logic App/Functions that depend on it",
+    azure_resource: "Microsoft.ApiManagement/service",
+  };
+  changes.push("CAT-26: API Gateway detected — APIM migration block added (NOTE: 30+ min to provision)");
+  return changes;
+}
+
+// ─── CAT-27: CodePipeline → Azure DevOps marker ──────────────────────────────
+function cat27CodePipelineToDevOps(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const hasCodePipeline = /AWS::CodePipeline|CodeBuild|CodeDeploy/i.test(sourceStr);
+  if (!hasCodePipeline) return changes;
+
+  output["_CAT27_AZURE_DEVOPS_REQUIRED"] = {
+    _note: "MIGRATION_REQUIRED: Source had CodePipeline. Generate Azure DevOps YAML pipeline.",
+    stage_mapping: {
+      "CodePipeline stage":  "Azure DevOps pipeline stage",
+      "CodeBuild action":    "Azure DevOps build task",
+      "CodeDeploy action":   "Azure DevOps deployment task",
+      "S3 artifact store":   "Azure DevOps artifact feed",
+    },
+    prerequisite: "Azure DevOps organisation and project must exist before importing pipeline YAML",
+    import_command: "az pipelines create --name 'MigratedPipeline' --yml-path azure-pipelines.yml --repository-type github",
+  };
+  changes.push("CAT-27: CodePipeline detected — Azure DevOps YAML pipeline block added");
+  return changes;
+}
+
+// ─── CAT-28: DependsOn ordering ───────────────────────────────────────────────
+function cat28DependsOnOrdering(output: Record<string, unknown>): string[] {
+  const changes: string[] = [];
+  const actions = output.actions as Record<string, unknown> | undefined;
+  if (!actions) return changes;
+
+  // Build reference graph and verify all runAfter deps exist
+  const allActions = flattenActions(actions);
+  const actionNames = new Set(Object.keys(allActions));
+  const missingDeps: string[] = [];
+
+  for (const [name, action] of Object.entries(allActions)) {
+    const a = action as Record<string, unknown>;
+    const runAfter = a.runAfter as Record<string, string[]> | undefined;
+    if (!runAfter) continue;
+    for (const dep of Object.keys(runAfter)) {
+      if (!actionNames.has(dep)) {
+        missingDeps.push(`'${name}' depends on missing action '${dep}'`);
+      }
+    }
+  }
+
+  if (missingDeps.length > 0) {
+    output["_CAT28_DEPENDENCY_ERRORS"] = {
+      _note: "DEPENDENCY_ERRORS: The following runAfter dependencies reference missing actions",
+      errors: missingDeps,
+      resolution: "Add missing actions or correct runAfter references before deployment",
+    };
+    changes.push(`CAT-28: ${missingDeps.length} broken dependency reference(s) detected and flagged`);
+  } else {
+    changes.push("CAT-28: Dependency graph validated — all runAfter references resolve correctly");
+  }
+  return changes;
+}
+
+// ─── CAT-29: Multi-region / cost / ARM validation markers ─────────────────────
+function cat29ProductionReadinessMarkers(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const markers: string[] = [];
+
+  // Multi-region
+  if (/StackSet|MultiRegion|us-east-1.*us-west|Route53.*Latency/i.test(sourceStr)) {
+    markers.push("MULTI_REGION: Source deployed across multiple AWS regions. Generate Traffic Manager profile + Azure paired region resources.");
+  }
+
+  // Cost estimation placeholder
+  output["_CAT29_COST_ESTIMATION"] = {
+    _note: "Run cost estimation using Azure Retail Prices API before deployment",
+    api_endpoint: "https://prices.azure.com/api/retail/prices",
+    aws_comparison: "Compare with AWS Cost Explorer for source cost baseline",
+    resources_to_estimate: ["Microsoft.Logic/workflows", "Microsoft.Web/sites", "Microsoft.DocumentDB/databaseAccounts"],
+  };
+  markers.push("COST_ESTIMATE_REQUIRED: Query Azure Retail Prices API for monthly cost projection");
+
+  // ARM validation
+  output["_CAT29_ARM_VALIDATION"] = {
+    _note: "Validate ARM template before deployment",
+    recommended_tool: "arm-ttk (ARM Template Toolkit)",
+    command: "Invoke-ARMTTKTests -TemplatePath ./azuredeploy.json",
+    what_if_command: "az deployment group what-if --resource-group {rg} --template-file azuredeploy.json",
+  };
+  markers.push("ARM_VALIDATION_REQUIRED: Run arm-ttk or az deployment what-if before deploying");
+
+  if (markers.length > 0) {
+    changes.push(`CAT-29: ${markers.length} production-readiness marker(s) added: ${markers.join("; ")}`);
+  }
+  return changes;
+}
+
+// ─── CAT-30: Rollback plan ────────────────────────────────────────────────────
+import { generateRollbackPlan } from "./rollback-generator";
+
+function cat30RollbackPlan(output: Record<string, unknown>): string[] {
+  const changes: string[] = [];
+  const plan = generateRollbackPlan(output);
+
+  output["_CAT30_ROLLBACK_PLAN"] = {
+    _note: "Structured rollback plan — execute in reverse deployment order if rollback required",
+    generated_at: plan.generatedAt,
+    total_resources: plan.totalResources,
+    estimated_total_rollback_minutes: plan.estimatedTotalRollbackMinutes,
+    critical_warnings: plan.criticalWarnings,
+    rollback_steps: plan.entries.map((e) => ({
+      step: e.deploymentOrder,
+      resource: e.resourceName,
+      type: e.resourceType,
+      stateful: e.stateful,
+      action: e.rollbackAction,
+      cli_command: e.azureCliCommand,
+      estimated_minutes: e.estimatedMinutes,
+      notes: e.notes,
+    })),
+  };
+
+  changes.push(
+    `CAT-30: Rollback plan generated — ${plan.totalResources} resource(s), ` +
+    `estimated ${plan.estimatedTotalRollbackMinutes} min total, ` +
+    `${plan.criticalWarnings.filter(w => w.includes("STATEFUL") || w.includes("CRITICAL")).length} stateful/critical resource(s) flagged`
+  );
+  return changes;
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export function applyMigrationPostProcessing(
   aiOutput: Record<string, unknown>,
   sourceAsl: Record<string, unknown>
 ): PostProcessResult {
-  // Deep clone so we never mutate the original
   const output = deepClone(aiOutput);
   const sourceStr = JSON.stringify(sourceAsl);
   const allChanges: string[] = [];
@@ -734,6 +1153,7 @@ export function applyMigrationPostProcessing(
     else allChanges.push(`${label}: no issues found`);
   };
 
+  // ── Original 15 categories ─────────────────────────────────────────────────
   run("CAT-1",  cat1TriggerMigration(output, sourceAsl));
   run("CAT-2",  cat2BodyPassing(output));
   run("CAT-3",  cat3SsmReferences(output));
@@ -749,6 +1169,23 @@ export function applyMigrationPostProcessing(
   run("CAT-13", cat13ForeachConcurrency(output, sourceStr));
   run("CAT-14", cat14CloudFrontUrls(output));
   run("CAT-15", cat15ParametersBlock(output));
+
+  // ── New 15 categories (suggestions 16–30) ──────────────────────────────────
+  run("CAT-16", cat16BedrockModelMapping(output));
+  run("CAT-17", cat17DynamoStreamTrigger(output, sourceStr));
+  run("CAT-18", cat18KinesisToEventHubs(output));
+  run("CAT-19", cat19S3EventTrigger(output, sourceStr));
+  run("CAT-20", cat20KmsToKeyVault(output));
+  run("CAT-21", cat21CognitoToEntraB2C(output));
+  run("CAT-22", cat22XRayToAppInsights(output, sourceStr));
+  run("CAT-23", cat23CloudWatchAlarms(output, sourceStr));
+  run("CAT-24", cat24GuardDutyToDefender(output, sourceStr));
+  run("CAT-25", cat25VpcToVnet(output, sourceStr));
+  run("CAT-26", cat26ApiGatewayToApim(output, sourceStr));
+  run("CAT-27", cat27CodePipelineToDevOps(output, sourceStr));
+  run("CAT-28", cat28DependsOnOrdering(output));
+  run("CAT-29", cat29ProductionReadinessMarkers(output, sourceStr));
+  run("CAT-30", cat30RollbackPlan(output));
 
   return { output, changesApplied: allChanges };
 }
