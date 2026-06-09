@@ -554,7 +554,14 @@ function getAzureResource(action: Record<string, unknown>): string | undefined {
   if (actionType === "Function") {
     const fn = inputs.function as Record<string, unknown> | undefined;
     if (fn?.id) {
-      const parts = (fn.id as string).split("/");
+      const idStr = fn.id as string;
+      // Handle @concat(...) expressions — extract function name from '/functions/xxx'
+      const funcMatch = idStr.match(/\/functions\/([^'")]+)/);
+      if (funcMatch) {
+        return `ƒ ${funcMatch[1].replace(/[')]/g, "")}`;
+      }
+      // Fallback: simple path split
+      const parts = idStr.split("/");
       return `ƒ ${parts[parts.length - 1]}`;
     }
   }
@@ -563,8 +570,13 @@ function getAzureResource(action: Record<string, unknown>): string | undefined {
     const method = inputs.method as string | undefined;
     const uri = inputs.uri as string | undefined;
     if (uri) {
+      // Handle @concat(...) expressions in URIs
+      if (uri.includes("DataFactory")) return `${method || "POST"} ADF`;
+      if (uri.includes("management.azure.com")) return `${method || "GET"} ARM`;
       try {
-        const host = new URL(uri.replace(/@\{[^}]+\}/g, "x")).hostname.split(".")[0];
+        // Replace Azure Logic Apps expressions before URL parsing
+        const cleanUri = uri.replace(/@\{[^}]+\}/g, "x").replace(/@concat\([^)]*\)/g, "https://x.com");
+        const host = new URL(cleanUri).hostname.split(".")[0];
         return `${method || "GET"} ${host}`;
       } catch {
         return method || "HTTP";

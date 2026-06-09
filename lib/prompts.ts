@@ -396,40 +396,10 @@ CORRECT OUTPUT (Azure Logic Apps):
 
 Study this example carefully. The Choice state "InStock" became a single "If" action "In_Stock" with all true-branch actions inside "actions" and all false-branch actions inside "else.actions".
 
-=== MANDATORY POST-MIGRATION VALIDATION CHECKLIST ===
-Apply ALL of the following checks to your output before returning it:
+=== POST-PROCESSING NOTICE ===
+Focus ONLY on producing a structurally correct Azure Logic Apps JSON translation. Do NOT add validation markers, migration comments, or placeholder replacements — all 30 categories of post-migration validation (triggers, body passing, SSM references, S3 buckets, Glue/Iceberg gaps, CloudWatch refs, service name mapping, URL replacement, context variables, ADF authentication, polling, runAfter fixes, foreach concurrency, CloudFront URLs, parameters block, and 15 more) are applied programmatically AFTER your output is received.
 
-[CAT-1 TRIGGER] If the output has a Request/Http trigger but the source ASL Comment or EventBridge rule implies a schedule, replace it with a Recurrence trigger matching the cron expression. Convert AWS cron(min hr day month weekday year) to Azure frequency/interval/schedule. If schedule unknown, use a Recurrence placeholder with a comment: "SCHEDULE_PENDING - engineer must configure before deployment".
-
-[CAT-2 BODY-PASSING] For every Function or Http action where body is "@triggerBody()" but the action runs in the middle or end of the pipeline: replace with "@body('PreviousActionName')" referencing the last meaningful upstream action. Never use @triggerBody() for non-first steps. If step depends on multiple outputs, combine them with a Compose action first.
-
-[CAT-3 SSM-REFS] Scan all parameter keys and values for SSM patterns (/pipeline/, /app/, SSM_TOKEN_PATH, SSM_SECRET_NAME). Replace SSM_TOKEN_PATH → APP_CONFIG_KEY, SSM_SECRET_NAME → KEYVAULT_SECRET_NAME. Replace /pipeline/xxx paths with Azure App Configuration key equivalents. Replace aws ssm get-parameter CLI refs with az appconfig kv show. Tag each changed item with comment "MIGRATED_FROM_SSM".
-
-[CAT-4 S3-BUCKETS] Scan all string values for AWS S3 bucket name patterns (lowercase, hyphens, patterns: bronze-*, silver-*, gold-*, *-awsaccountid, *-region). Replace each with AZURE_CONTAINER_NAME_REPLACE placeholder. Replace s3:// URLs with abfss:// (ADLS Gen2) or wasbs:// (Blob). Add top-level field "S3_TO_AZURE_STORAGE_MAPPING_REQUIRED" listing every bucket found.
-
-[CAT-5 GLUE-ICEBERG] For any ADF pipeline action translated from a Glue startJobRun state that had --conf spark.sql.extensions or --datalake-formats iceberg arguments: add a "GAP_NOTICE" field saying "Original Glue job used Apache Iceberg with Spark. Azure Data Factory does not support Spark natively. Reimplement as Azure Databricks notebook or Synapse Spark pool. Replace Iceberg with Delta Lake. Replace glue_catalog with Azure catalog. Requires manual architectural work."
-
-[CAT-6 CLOUDWATCH-REFS] In every notification message body: replace /aws/lambda/ log paths with Application Insights equivalents. Replace "CloudWatch" with "Azure Monitor". Replace "Go to CloudWatch Logs" instructions with "Go to Azure Monitor > Log Analytics workspace". Replace aws logs get-log-events with az monitor app-insights query. Ensure instructions remain actionable for Azure engineers.
-
-[CAT-7 AWS-SERVICE-NAMES] In function ID paths and notification text: replace QuickSight → PowerBI, Redshift → Synapse, Athena → SynapseServerlessSQL, DynamoDB → CosmosDB, Kinesis → EventHubs. Add comment "RENAMED_FROM_AWS_SERVICE: original-name" on each renamed function. Do NOT rename business-logic function names.
-
-[CAT-8 AWS-URLS] In notification message bodies: replace *.cloudfront.net URLs with AZURE_CDN_ENDPOINT_REPLACE, *.execute-api.*.amazonaws.com with AZURE_APIM_ENDPOINT_REPLACE, *.s3-website-*.amazonaws.com with AZURE_STATIC_WEBAPP_URL_REPLACE. Add top-level "URL_MIGRATION_REQUIRED" field listing every placeholder and original URL.
-
-[CAT-9 CONTEXT-VARS] Scan for unreplaced $$.* Step Functions context variables: $$.Execution.Id → @workflow()?['run']?['id'], $$.Execution.Name → @workflow()?['run']?['name'], $$.Execution.StartTime → @workflow()?['run']?['startTime'], $$.State.Name → @action()?['name'], $$.Map.Item.Index → @iterationIndexes('ForeachName'), $$.Map.Item.Value → @items('ForeachName'). Any remaining $$. reference is an incomplete translation — fix all of them.
-
-[CAT-10 ADF-AUTH] For every Http action calling a management.azure.com/...DataFactory.../createRun endpoint: if the inputs block has no "authentication" field, add: "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }. Without this, the HTTP call returns 401 at runtime.
-
-[CAT-11 ADF-POLLING] For every Http action that triggers an ADF pipeline via POST to createRun: add an Until loop immediately after it that polls GET pipeline run status every 60 seconds and exits when status is Succeeded or Failed. If Failed, route to the failure notification action. This matches the synchronous behaviour of AWS startJobRun.sync.
-
-[CAT-12 SKIPPED-RUNAFTER] For every action whose runAfter lists both a main action (Succeeded) and an alert/fallback action (Succeeded): add "Skipped" alongside "Succeeded" for the alert action dependency. Example: { "AlertAction": ["Succeeded", "Skipped"] }. Without Skipped, the downstream action never runs on the happy path because the alert action is Skipped, not Succeeded.
-
-[CAT-13 FOREACH-CONCURRENCY] For every Foreach action translated from an AWS Map state that had MaxConcurrency: if MaxConcurrency was 1, add "operationOptions": "Sequential". If MaxConcurrency was N > 1, add "runtimeConfiguration": { "concurrency": { "repetitions": N } }. If MaxConcurrency was 0 (unlimited), leave without limit. This prevents overloading downstream services.
-
-[CAT-14 CLOUDFRONT-URLS] In every notification message body containing cloudfront.net URLs: replace with https://AZURE_STATIC_WEBAPP_HOSTNAME_REPLACE/index.html. Add migration note: "CloudFront URL must be replaced with actual Azure CDN endpoint after dashboard deployment." Also catch amazonaws.com, execute-api, s3.amazonaws.com in message bodies.
-
-[CAT-15 PARAMETERS-BLOCK] Ensure the parameters block is production-ready. Add these if missing: "storageAccountName" (String, "Azure Storage Account replacing S3"), "appConfigEndpoint" (String, "Azure App Configuration replacing AWS SSM"), "adfFactoryName" (String, "Azure Data Factory name"), "serviceBusNamespace" (String, "Azure Service Bus replacing AWS SNS"). Replace hardcoded SUB/RG/ADF/APP placeholders with @parameters('parameterName') expressions.
-
-Now convert the following AWS Step Functions definition. Apply all 15 checks to the output. Return ONLY valid JSON:
+Your job: translate the ASL structure, action types, expressions, and control flow accurately. Return ONLY valid JSON:
 `;
 
 export const AZURE_TO_AWS_PROMPT = `Convert the following Azure Logic Apps workflow definition to a valid, deployable AWS Step Functions (ASL) definition.

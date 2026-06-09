@@ -88,26 +88,35 @@ export async function POST(request: NextRequest) {
 
     const userPrompt = contextBlock + `User question: ${message}`;
 
-    const models = ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"];
+    const models = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.0-flash"];
     let result;
     let lastError: unknown;
 
     for (const modelName of models) {
-      try {
-        const response = await genAI.models.generateContent({
-          model: modelName,
-          contents: userPrompt,
-          config: {
-            systemInstruction: ASSISTANT_SYSTEM,
-            thinkingConfig: { thinkingBudget: 0 },
-          },
-        });
-        result = response;
-        break;
-      } catch (e) {
-        lastError = e;
-        continue;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await genAI.models.generateContent({
+            model: modelName,
+            contents: userPrompt,
+            config: {
+              systemInstruction: ASSISTANT_SYSTEM,
+              ...(modelName.includes("2.5") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+            },
+          });
+          result = response;
+          break;
+        } catch (e) {
+          lastError = e;
+          const errMsg = e instanceof Error ? e.message : String(e);
+          const is503 = errMsg.includes("503") || errMsg.includes("UNAVAILABLE");
+          if (is503 && attempt < 3) {
+            await new Promise(r => setTimeout(r, 3000));
+            continue;
+          }
+          break;
+        }
       }
+      if (result) break;
     }
 
     if (!result) {

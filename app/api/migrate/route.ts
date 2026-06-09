@@ -6,6 +6,7 @@ import { validateAzureLogicApps, validateAWSStepFunctions, type ValidationIssue 
 import { compareWorkflows } from "@/lib/comparison";
 import { applyMigrationPostProcessing } from "@/lib/migration-post-processor";
 import { detectApplicableMappings, PRODUCTION_ASSESSMENT_30 } from "@/lib/service-registry";
+import { sanitizeWorkflowPii, restorePiiFromPlaceholders } from "@/lib/pii-sanitizer";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -45,53 +46,120 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ── PII sanitization: strip personal data before sending to AI ──────────
+    const piiResult = sanitizeWorkflowPii(sourceCode);
+    const safeSourceCode = piiResult.sanitized;
+    if (piiResult.totalRedactions > 0) {
+      console.log(`[migrate] PII sanitizer: ${piiResult.totalRedactions} redaction(s) applied`);
+      piiResult.redactionLog.forEach((l) => console.log(`[migrate]   ${l}`));
+    }
+
     const basePrompt = getPrompt(direction);
     const correctionBlock = corrections
       ? `\n\n${corrections}\n\n=== SOURCE WORKFLOW TO CONVERT ===\n`
       : "\n\n";
-    const userPrompt = basePrompt + correctionBlock + sourceCode;
+    const userPrompt = basePrompt + correctionBlock + safeSourceCode;
 
-    const models = ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"];
+    const models = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.0-flash"];
     let result;
     let lastError: unknown;
 
+    let usedModel = "";
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 3000; // 3 seconds between retries for 503
+
     for (const modelName of models) {
-      try {
-        const response = await genAI.models.generateContent({
-          model: modelName,
-          contents: userPrompt,
-          config: {
-            systemInstruction: SYSTEM_PROMPT,
-            thinkingConfig: { thinkingBudget: 0 }, // disable thinking for max speed
-          },
-        });
-        result = response;
-        break;
-      } catch (e) {
-        lastError = e;
-        continue;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          console.log(`[migrate] Trying model: ${modelName} (attempt ${attempt}/${MAX_RETRIES})`);
+          const response = await genAI.models.generateContent({
+            model: modelName,
+            contents: userPrompt,
+            config: {
+              systemInstruction: SYSTEM_PROMPT,
+              // Only add thinkingConfig for models that support it
+              ...(modelName.includes("2.5") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+            },
+          });
+          result = response;
+          usedModel = modelName;
+          console.log(`[migrate] Model ${modelName} succeeded on attempt ${attempt}`);
+          break;
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          console.error(`[migrate] Model ${modelName} attempt ${attempt} failed:`, errMsg.slice(0, 200));
+          lastError = e;
+
+          // Retry on 503 (high demand) — these are temporary
+          const is503 = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand");
+          if (is503 && attempt < MAX_RETRIES) {
+            console.log(`[migrate] 503 detected, retrying in ${RETRY_DELAY_MS}ms...`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+          break; // Don't retry on 404, 429, or other errors — move to next model
+        }
       }
+      if (result) break; // Got a result, stop trying models
     }
 
     if (!result) {
-      throw lastError || new Error("All models failed");
+      const errMsg = lastError instanceof Error ? lastError.message : "All models failed";
+      console.error("[migrate] All models failed. Last error:", errMsg);
+      // Return a user-friendly error based on the error type
+      if (errMsg.includes("429") || errMsg.includes("quota")) {
+        throw new Error("API quota exceeded. Please wait a few minutes or check your Gemini API billing plan.");
+      }
+      if (errMsg.includes("503") || errMsg.includes("UNAVAILABLE")) {
+        throw new Error("All AI models are temporarily unavailable due to high demand. Please try again in a minute.");
+      }
+      throw new Error(`Migration failed: ${errMsg.slice(0, 200)}`);
     }
 
     let outputCode = (result.text ?? "").trim();
 
-    const fenceMatch = outputCode.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) {
-      outputCode = fenceMatch[1].trim();
+    // Debug: log raw output details
+    console.log(`[migrate] Model ${usedModel} returned ${outputCode.length} chars`);
+    console.log(`[migrate] First 200 chars: ${outputCode.slice(0, 200)}`);
+    if (outputCode.length === 0) {
+      console.error("[migrate] WARNING: Model returned empty text!");
+      // Try candidates if available
+      try {
+        const raw = result as unknown as Record<string, unknown>;
+        const candidates = raw.candidates as Array<Record<string, unknown>> | undefined;
+        if (candidates && candidates.length > 0) {
+          const content = candidates[0].content as Record<string, unknown> | undefined;
+          const parts = content?.parts as Array<Record<string, unknown>> | undefined;
+          if (parts) {
+            const textParts = parts.filter(p => p.text).map(p => p.text as string);
+            if (textParts.length > 0) {
+              outputCode = textParts.join("").trim();
+              console.log(`[migrate] Recovered ${outputCode.length} chars from candidates`);
+            }
+          }
+        }
+      } catch { /* best-effort candidate recovery */ }
+    }
+
+    // ── Robust JSON extraction from AI output ─────────────────────────────
+    outputCode = extractJsonFromAiOutput(outputCode);
+
+    // ── Restore PII: put original values back into the migrated output ───
+    if (piiResult.totalRedactions > 0) {
+      outputCode = restorePiiFromPlaceholders(outputCode, piiResult.placeholderMap);
+      console.log(`[migrate] PII restored: ${piiResult.totalRedactions} placeholder(s) replaced with originals`);
     }
 
     let migrationLog: string[] = [];
     let validationIssues: ValidationIssue[] = [];
     let comparison = null;
+    let jsonParsed = false;
 
     try {
       let parsed = JSON.parse(outputCode);
+      jsonParsed = true;
 
-      // ── Apply all 15 programmatic post-processing categories ──────────────
+      // ── Apply all 30 programmatic post-processing categories ──────────────
       if (direction === "aws-to-azure") {
         try {
           const sourceJson = JSON.parse(sourceCode);
@@ -100,11 +168,11 @@ export async function POST(request: NextRequest) {
           parsed = processed;
           // Prepend post-processor results to migration log
           migrationLog = [
-            `Post-processor applied ${changesApplied.filter(c => !c.includes("no issues found")).length} fix(es) across 15 categories`,
+            `Post-processor applied ${changesApplied.filter(c => !c.includes("no issues found")).length} fix(es) across 30 categories`,
             ...changesApplied,
           ];
-        } catch {
-          migrationLog = ["Post-processor skipped — source JSON parse error"];
+        } catch (ppErr) {
+          migrationLog = [`Post-processor skipped — ${ppErr instanceof Error ? ppErr.message : "source JSON parse error"}`];
         }
       }
 
@@ -128,20 +196,39 @@ export async function POST(request: NextRequest) {
       } catch {
         // Comparison is best-effort — don't fail the migration
       }
-    } catch {
-      migrationLog = ["Warning: Output may not be valid JSON. Review manually."];
+    } catch (parseErr) {
+      const preview = outputCode.slice(0, 300).replace(/\n/g, " ");
+      console.error(`[migrate] JSON parse failed. Preview: ${preview}`);
+      console.error(`[migrate] Parse error:`, parseErr instanceof Error ? parseErr.message : parseErr);
+      migrationLog = [
+        "Warning: Output may not be valid JSON. Review manually.",
+        `Model used: ${usedModel}`,
+        `Raw output length: ${outputCode.length} chars`,
+        `Preview: ${outputCode.slice(0, 150).replace(/\n/g, " ")}...`,
+      ];
+    }
+
+    // ── Add PII protection info to migration log ───────────────────────────
+    if (piiResult.totalRedactions > 0) {
+      migrationLog.unshift(
+        `🛡 PII Protection: ${piiResult.totalRedactions} sensitive value(s) were redacted before AI processing`,
+        ...piiResult.redactionLog.map((l) => `  ${l}`),
+        `  All original values restored in final output`
+      );
     }
 
     const errors = validationIssues.filter((i) => i.severity === "error");
     const warnings = validationIssues.filter((i) => i.severity === "warning");
 
-    if (errors.length > 0) {
+    if (!jsonParsed) {
+      // Don't claim validation passed when JSON didn't even parse
+      migrationLog.push("⚠ JSON parse failed — schema validation skipped");
+    } else if (errors.length > 0) {
       migrationLog.push(`${errors.length} schema error(s) detected — see validation details`);
-    }
-    if (warnings.length > 0) {
+    } else if (warnings.length > 0) {
       migrationLog.push(`${warnings.length} warning(s) — review recommended`);
-    }
-    if (errors.length === 0 && warnings.length === 0) {
+      migrationLog.push("Schema validation passed with warnings");
+    } else {
       migrationLog.push("Schema validation passed — output is deployment-ready");
     }
 
@@ -163,6 +250,78 @@ export async function POST(request: NextRequest) {
     console.error("Migration error:", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// ─── Robust JSON extraction from AI output ──────────────────────────────────
+// The AI may wrap JSON in markdown fences, add commentary, or return partial text.
+// This function tries multiple strategies to extract valid JSON.
+
+function extractJsonFromAiOutput(raw: string): string {
+  let text = raw.trim();
+
+  // Strategy 1: Strip markdown code fences (```json ... ``` or ``` ... ```)
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
+
+  // Strategy 2: If it starts with valid JSON, try parsing directly
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      JSON.parse(text);
+      return text;
+    } catch {
+      // May have trailing text after the JSON — try to find the matching brace
+    }
+  }
+
+  // Strategy 3: Find the first { and last matching } to extract the JSON object
+  const firstBrace = text.indexOf("{");
+  if (firstBrace >= 0) {
+    // Find the matching closing brace by counting
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let lastBrace = -1;
+
+    for (let i = firstBrace; i < text.length; i++) {
+      const ch = text[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth++;
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) { lastBrace = i; break; }
+      }
+    }
+
+    if (lastBrace > firstBrace) {
+      const candidate = text.slice(firstBrace, lastBrace + 1);
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  // Strategy 4: Try common AI patterns — "Here is the JSON:\n{...}"
+  const jsonStart = text.search(/\n\s*\{/);
+  if (jsonStart >= 0) {
+    const fromBrace = text.slice(jsonStart).trim();
+    try {
+      JSON.parse(fromBrace);
+      return fromBrace;
+    } catch {
+      // Fall through
+    }
+  }
+
+  // Strategy 5: Return whatever we have — the caller will handle the parse error
+  return text;
 }
 
 // 30-point assessment is now imported from service-registry.ts

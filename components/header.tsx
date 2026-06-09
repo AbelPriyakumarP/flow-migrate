@@ -1,128 +1,103 @@
 "use client";
 
-import { useTheme } from "@/hooks/useTheme";
 import Link from "next/link";
 
 interface HeaderProps {
   onShowShortcuts?: () => void;
+  onShowLog?: () => void;
+  logCount?: number;
+  isLoading?: boolean;
 }
 
-export default function Header({ onShowShortcuts }: HeaderProps) {
-  const { theme, toggleTheme, mounted } = useTheme();
-
+export default function Header({ onShowShortcuts, onShowLog, logCount = 0, isLoading }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-40 border-b border-white/10 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 shadow-lg">
-      <div className="mx-auto flex max-w-[1480px] items-center justify-between px-6 py-3.5">
-        <div className="flex items-center gap-3.5">
-          <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-500 shadow-lg shadow-indigo-500/30">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M7 7h10v10" />
-              <path d="M7 17 17 7" />
-            </svg>
-            <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-500 opacity-40 blur-md -z-10" />
-          </div>
-          <div>
-            <h1 className="text-[16px] font-bold tracking-tight text-white">
-              FlowMigrate
-            </h1>
-            <p className="text-[11px] font-medium text-slate-400">
-              Enterprise Workflow Migration Bridge
-            </p>
-          </div>
+    <header
+      className="relative z-30 flex items-center justify-between border-b px-4 shrink-0"
+      style={{
+        height: "var(--header-height)",
+        borderColor: "var(--border-subtle)",
+        background: "rgba(11, 13, 26, 0.8)",
+        backdropFilter: "blur(16px)",
+      }}
+    >
+      {/* Left: Logo */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: "var(--accent-gradient)" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 7h10v10" />
+            <path d="M7 17 17 7" />
+          </svg>
         </div>
+        <span className="text-[15px] font-bold tracking-tight" style={{ color: "var(--text-bright)" }}>
+          FlowMigrate
+        </span>
+        <div className="ml-1 flex items-center gap-0.5 rounded-md px-2 py-0.5" style={{ background: "var(--accent-bg)", border: "1px solid var(--border-primary)" }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>
+        </div>
+      </div>
 
-        <div className="flex items-center gap-4">
-          <div className="hidden items-center gap-2.5 sm:flex">
-            <div className="flex items-center gap-2 rounded-lg bg-white/[0.07] px-3.5 py-2 backdrop-blur-sm border border-white/[0.08]">
-              <div className="h-2 w-2 rounded-full bg-[var(--aws-color)] shadow-sm shadow-orange-400/40" />
-              <span className="text-[12px] font-semibold text-orange-300">AWS</span>
-            </div>
-            <div className="flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round">
-                <defs>
-                  <linearGradient id="arrowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#fb923c" />
-                    <stop offset="100%" stopColor="#60a5fa" />
-                  </linearGradient>
-                </defs>
-                <path d="M5 12h14" stroke="url(#arrowGrad)" />
-                <path d="m12 5 7 7-7 7" stroke="url(#arrowGrad)" />
-              </svg>
-            </div>
-            <div className="flex items-center gap-2 rounded-lg bg-white/[0.07] px-3.5 py-2 backdrop-blur-sm border border-white/[0.08]">
-              <div className="h-2 w-2 rounded-full bg-[var(--azure-color)] shadow-sm shadow-blue-400/40" />
-              <span className="text-[12px] font-semibold text-blue-300">Azure</span>
-            </div>
-          </div>
+      {/* Center: Nav links */}
+      <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-5">
+        <Link
+          href="/docs"
+          className="flex items-center gap-1.5 text-[12px] font-medium transition-colors hover:text-[var(--text-accent)]"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Documentation
+        </Link>
+        <span style={{ color: "var(--border-subtle)" }}>|</span>
+        <button
+          className="flex items-center gap-1.5 text-[12px] font-medium transition-colors hover:text-[var(--text-accent)]"
+          style={{ color: "var(--text-muted)" }}
+          onClick={onShowShortcuts}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+          </svg>
+          Export Config
+        </button>
+      </div>
 
-          {/* Docs link */}
-          <Link
-            href="/docs"
-            className="btn-press flex h-9 items-center gap-1.5 rounded-lg bg-white/[0.07] px-3 border border-white/[0.08] text-slate-300 hover:bg-white/[0.12] hover:text-white transition-all text-[12px] font-semibold"
-            title="Documentation"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-            </svg>
-            <span className="hidden sm:inline">Docs</span>
-          </Link>
-
-          {/* Keyboard shortcuts */}
-          {onShowShortcuts && (
-            <button
-              onClick={onShowShortcuts}
-              className="btn-press flex h-9 w-9 items-center justify-center rounded-lg bg-white/[0.07] border border-white/[0.08] text-slate-300 hover:bg-white/[0.12] hover:text-white transition-all"
-              title="Keyboard Shortcuts (?)"
-              aria-label="Keyboard shortcuts"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="M6 8h.001" />
-                <path d="M10 8h.001" />
-                <path d="M14 8h.001" />
-                <path d="M18 8h.001" />
-                <path d="M8 12h.001" />
-                <path d="M12 12h.001" />
-                <path d="M16 12h.001" />
-                <path d="M7 16h10" />
-              </svg>
-            </button>
-          )}
-
-          {/* Dark mode toggle */}
+      {/* Right: Actions */}
+      <div className="flex items-center gap-2">
+        {/* Migration Log icon */}
+        {onShowLog && (
           <button
-            onClick={toggleTheme}
-            className="btn-press flex h-9 w-9 items-center justify-center rounded-lg bg-white/[0.07] border border-white/[0.08] text-slate-300 hover:bg-white/[0.12] hover:text-white transition-all"
-            title={mounted ? `Switch to ${theme === "light" ? "dark" : "light"} mode` : "Toggle theme"}
-            aria-label="Toggle dark mode"
+            onClick={onShowLog}
+            className="btn-press relative flex h-8 w-8 items-center justify-center rounded-lg transition-all hover:bg-[var(--hover-bg)]"
+            style={{ color: "var(--text-muted)" }}
+            title="Migration Log"
           >
-            {(!mounted || theme === "light") ? (
-              /* Moon icon - show in light mode */
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-              </svg>
-            ) : (
-              /* Sun icon - show in dark mode */
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="5" />
-                <line x1="12" y1="1" x2="12" y2="3" />
-                <line x1="12" y1="21" x2="12" y2="23" />
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                <line x1="1" y1="12" x2="3" y2="12" />
-                <line x1="21" y1="12" x2="23" y2="12" />
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-              </svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14,2 14,8 20,8" />
+              <line x1="16" x2="8" y1="13" y2="13" />
+              <line x1="16" x2="8" y1="17" y2="17" />
+            </svg>
+            {(logCount > 0 || isLoading) && (
+              <span className={`absolute -top-0.5 -right-0.5 flex h-[14px] min-w-[14px] items-center justify-center rounded-full px-0.5 text-[8px] font-bold text-white ${isLoading ? "animate-pulse" : ""}`} style={{ background: "var(--accent)" }}>
+                {isLoading ? "~" : logCount}
+              </span>
             )}
           </button>
+        )}
 
-          <div className="flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1.5 border border-emerald-500/20">
-            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400/50" />
-            <span className="text-[11px] font-semibold text-emerald-300">Ready</span>
-          </div>
-        </div>
+        {/* Keyboard shortcuts */}
+        {onShowShortcuts && (
+          <button
+            onClick={onShowShortcuts}
+            className="btn-press flex h-8 w-8 items-center justify-center rounded-lg transition-all hover:bg-[var(--hover-bg)]"
+            style={{ color: "var(--text-muted)" }}
+            title="Keyboard Shortcuts"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M6 8h.001" /><path d="M10 8h.001" /><path d="M14 8h.001" /><path d="M18 8h.001" />
+              <path d="M8 12h.001" /><path d="M12 12h.001" /><path d="M16 12h.001" />
+              <path d="M7 16h10" />
+            </svg>
+          </button>
+        )}
       </div>
     </header>
   );

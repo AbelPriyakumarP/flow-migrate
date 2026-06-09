@@ -44,31 +44,40 @@ export async function POST(request: NextRequest) {
       },
     ];
 
-    const models = ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"];
+    const models = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.0-flash"];
     let result;
     let lastError: unknown;
 
     for (const modelName of models) {
-      try {
-        const response = await genAI.models.generateContent({
-          model: modelName,
-          contents: [
-            { role: "user", parts: [
-              { text: IMAGE_ANALYSIS_PROMPT },
-              { inlineData: { mimeType, data: imageData } },
-            ]},
-          ],
-          config: {
-            systemInstruction: SYSTEM_PROMPT,
-            thinkingConfig: { thinkingBudget: 0 },
-          },
-        });
-        result = response;
-        break;
-      } catch (e) {
-        lastError = e;
-        continue;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await genAI.models.generateContent({
+            model: modelName,
+            contents: [
+              { role: "user", parts: [
+                { text: IMAGE_ANALYSIS_PROMPT },
+                { inlineData: { mimeType, data: imageData } },
+              ]},
+            ],
+            config: {
+              systemInstruction: SYSTEM_PROMPT,
+              ...(modelName.includes("2.5") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+            },
+          });
+          result = response;
+          break;
+        } catch (e) {
+          lastError = e;
+          const errMsg = e instanceof Error ? e.message : String(e);
+          const is503 = errMsg.includes("503") || errMsg.includes("UNAVAILABLE");
+          if (is503 && attempt < 3) {
+            await new Promise(r => setTimeout(r, 3000));
+            continue;
+          }
+          break;
+        }
       }
+      if (result) break;
     }
 
     if (!result) {
@@ -77,11 +86,8 @@ export async function POST(request: NextRequest) {
 
     let generatedCode = (result.text ?? "").trim();
 
-    // Strip code fences if present
-    const fenceMatch = generatedCode.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) {
-      generatedCode = fenceMatch[1].trim();
-    }
+    // Robust JSON extraction from AI output
+    generatedCode = extractJsonFromAiOutput(generatedCode);
 
     // Validate JSON
     try {
@@ -108,4 +114,32 @@ export async function POST(request: NextRequest) {
     console.error("Image analysis error:", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// ─── Robust JSON extraction from AI output ──────────────────────────────────
+function extractJsonFromAiOutput(raw: string): string {
+  let text = raw.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) text = fenceMatch[1].trim();
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try { JSON.parse(text); return text; } catch { /* continue */ }
+  }
+  const firstBrace = text.indexOf("{");
+  if (firstBrace >= 0) {
+    let depth = 0, inStr = false, esc = false, last = -1;
+    for (let i = firstBrace; i < text.length; i++) {
+      const ch = text[i];
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") depth++;
+      if (ch === "}") { depth--; if (depth === 0) { last = i; break; } }
+    }
+    if (last > firstBrace) {
+      const candidate = text.slice(firstBrace, last + 1);
+      try { JSON.parse(candidate); return candidate; } catch { /* continue */ }
+    }
+  }
+  return text;
 }
