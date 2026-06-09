@@ -162,7 +162,6 @@ export default function Home() {
   const totalIssues = errorCount + warningCount;
   const manualTodos = logs.filter((l) => l.includes("TODO") || l.includes("MANUAL") || l.includes("GAP_NOTICE") || l.includes("REPLACE") || l.includes("PENDING")).length;
 
-  // ─── Sidebar nav items ────────────────────────────────────────────────
   const sidebarNav: Array<{ id: ActiveModule; label: string; icon: React.ReactNode; badge?: number }> = [
     {
       id: "code", label: "Workflows",
@@ -186,7 +185,7 @@ export default function Home() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden" style={{ background: "var(--bg-base)" }}>
-      {/* ─── 3D Background Elements ──────────────────────────────────────── */}
+      {/* Ambient background */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="grid-background" />
         <div className="orb orb-1" />
@@ -197,25 +196,30 @@ export default function Home() {
       <Header onShowShortcuts={() => setShowShortcuts(true)} onShowLog={() => setShowLogDrawer(true)} logCount={logs.length} isLoading={isLoading} />
 
       <div className="relative z-10 flex flex-1 overflow-hidden">
-        {/* ─── Premium Sidebar ──────────────────────────────────────────── */}
-        <aside className="flex w-[var(--sidebar-width)] flex-col border-r shrink-0" style={{ borderColor: "var(--border-subtle)", background: "rgba(11,13,26,0.95)", backdropFilter: "blur(20px)" }}>
-          {/* Sidebar header */}
-          <div className="px-5 pt-5 pb-4">
-            <div className="flex items-center gap-2.5 mb-1">
+        {/* ─── Sidebar ─────────────────────────────────────────────── */}
+        <aside
+          className="hidden md:flex w-[var(--sidebar-width)] flex-col border-r shrink-0"
+          style={{ borderColor: "var(--border-subtle)", background: "rgba(11, 14, 28, 0.92)", backdropFilter: "blur(20px)" }}
+        >
+          {/* Logo */}
+          <div className="px-5 pt-5 pb-3">
+            <div className="flex items-center gap-2.5">
               <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: "var(--accent-gradient)" }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M7 7h10v10" /><path d="M7 17 17 7" /></svg>
               </div>
-              <span className="text-[13px] font-bold tracking-tight" style={{ color: "var(--text-bright)" }}>Migration Studio</span>
+              <div>
+                <span className="text-[13px] font-bold tracking-tight" style={{ color: "var(--text-bright)" }}>Migration Studio</span>
+                <p className="text-[9px] mt-0.5 font-medium" style={{ color: "var(--text-muted)" }}>v3.2 — Enterprise</p>
+              </div>
             </div>
-            <p className="text-[10px] mt-1 ml-[38px]" style={{ color: "var(--text-muted)" }}>Enterprise Bridge v3.2</p>
           </div>
 
-          {/* Nav section label */}
-          <div className="px-5 mb-2">
-            <span className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ color: "var(--text-muted)", opacity: 0.6 }}>Navigation</span>
+          {/* Section label */}
+          <div className="px-5 mt-3 mb-2">
+            <span className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ color: "var(--text-muted)", opacity: 0.5 }}>Modules</span>
           </div>
 
-          {/* Nav items */}
+          {/* Nav */}
           <nav className="flex flex-col gap-0.5 px-3">
             {sidebarNav.map((item) => {
               const isActive = activeModule === item.id;
@@ -225,7 +229,7 @@ export default function Home() {
                   onClick={() => setActiveModule(item.id)}
                   className={`sidebar-nav-item group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${isActive ? "active" : ""}`}
                 >
-                  <div className={`transition-colors ${isActive ? "text-[var(--accent)]" : "text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]"}`}>
+                  <div className={`transition-colors ${isActive ? "text-[var(--accent-hover)]" : "text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]"}`}>
                     {item.icon}
                   </div>
                   <span className={`text-[12px] font-semibold ${isActive ? "text-[var(--text-bright)]" : "text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]"}`}>
@@ -241,12 +245,10 @@ export default function Home() {
             })}
           </nav>
 
-          {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Bottom sidebar section */}
-          <div className="border-t px-3 pt-3 pb-2" style={{ borderColor: "var(--border-subtle)" }}>
-            {/* Batch migration */}
+          {/* Bottom actions */}
+          <div className="border-t px-3 py-3 space-y-0.5" style={{ borderColor: "var(--border-subtle)" }}>
             <button
               onClick={() => setShowBatch(true)}
               className="sidebar-nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all"
@@ -256,42 +258,25 @@ export default function Home() {
               </svg>
               <span className="text-[12px] font-semibold" style={{ color: "var(--text-muted)" }}>Batch Mode</span>
             </button>
-
-            {/* Workspace settings placeholder */}
-            <button className="sidebar-nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.8">
-                <circle cx="12" cy="12" r="3" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-              </svg>
-              <span className="text-[12px] font-semibold" style={{ color: "var(--text-muted)" }}>Settings</span>
-            </button>
-          </div>
-
-          {/* User section */}
-          <div className="border-t px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg text-[11px] font-bold text-white" style={{ background: "var(--accent-gradient)" }}>
-                DA
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[12px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>Dev Admin</p>
-                <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>PRO TIER</p>
-              </div>
-            </div>
           </div>
         </aside>
 
-        {/* ─── Main Content ───────────────────────────────────────────────── */}
+        {/* ─── Main ────────────────────────────────────────────────── */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* ── Top toolbar ─────────────────────────────────────────────── */}
-          <div className="flex items-center gap-2 border-b px-4 py-2.5 sm:px-5 shrink-0" style={{ borderColor: "var(--border-subtle)", background: "rgba(11,13,26,0.6)", backdropFilter: "blur(12px)" }}>
+          {/* Toolbar */}
+          <div
+            className="flex items-center gap-3 border-b px-4 py-2.5 sm:px-5 shrink-0"
+            style={{ borderColor: "var(--border-subtle)", background: "rgba(13, 16, 33, 0.7)", backdropFilter: "blur(12px)" }}
+          >
             <PlatformSelector detection={detection} target={target} onTargetChange={setTarget} />
 
-            <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-              <div className="hidden sm:flex items-center overflow-hidden rounded-xl" style={{ border: "1px solid var(--border-subtle)", background: "var(--bg-card)" }}>
-                <button onClick={() => loadSample("aws")} className="btn-press flex items-center gap-2 px-3 py-2 text-[11px] font-semibold transition-colors" style={{ color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)" }}>
+            <div className="ml-auto flex items-center gap-2">
+              {/* Sample buttons */}
+              <div className="hidden sm:flex items-center rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-subtle)" }}>
+                <button onClick={() => loadSample("aws")} className="btn-press flex items-center gap-2 px-3 py-2 text-[11px] font-semibold transition-colors hover:bg-[var(--hover-bg)]" style={{ color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)" }}>
                   <div className="h-2 w-2 rounded-full" style={{ background: "var(--aws-color)" }} /> AWS
                 </button>
-                <button onClick={() => loadSample("azure")} className="btn-press flex items-center gap-2 px-3 py-2 text-[11px] font-semibold transition-colors" style={{ color: "var(--text-muted)" }}>
+                <button onClick={() => loadSample("azure")} className="btn-press flex items-center gap-2 px-3 py-2 text-[11px] font-semibold transition-colors hover:bg-[var(--hover-bg)]" style={{ color: "var(--text-muted)" }}>
                   <div className="h-2 w-2 rounded-full" style={{ background: "var(--azure-color)" }} /> Azure
                 </button>
               </div>
@@ -300,7 +285,7 @@ export default function Home() {
               <CustomRulesPanel rules={customRules} onAdd={addRule} onUpdate={updateRule} onRemove={removeCustomRule} onToggle={toggleRule} onClearAll={clearAllRules} activeCount={activeRuleCount(migrationDirection)} />
               <CorrectionsPanel corrections={corrections} onClear={clearCorrections} onRemove={removeCorrection} direction={migrationDirection} />
 
-              {/* Execute Migration button */}
+              {/* Execute button */}
               <button
                 onClick={handleMigrate}
                 disabled={!canMigrate}
@@ -315,7 +300,7 @@ export default function Home() {
                 ) : (
                   <>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
-                    Execute Migration
+                    Migrate
                   </>
                 )}
               </button>
@@ -326,21 +311,20 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Active correction badge */}
+          {/* Active corrections indicator */}
           {activeCorrectionCount > 0 && (
-            <div className="flex items-center gap-2 border-b px-5 py-1.5 shrink-0" style={{ borderColor: "var(--border-subtle)", background: "rgba(139,92,246,0.08)" }}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+            <div className="flex items-center gap-2 border-b px-5 py-1.5 shrink-0" style={{ borderColor: "var(--border-subtle)", background: "var(--accent-bg)" }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
               <span className="text-[11px] font-bold" style={{ color: "var(--accent)" }}>{activeCorrectionCount} correction{activeCorrectionCount !== 1 ? "s" : ""} active</span>
             </div>
           )}
 
-          {/* ── Module Content Area ───────────────────────────────────────── */}
+          {/* ── Content Area ─────────────────────────────────────────── */}
           <div className="flex-1 overflow-auto">
-
-            {/* ── MODULE 1: Code Editor ─────────────────────────────────── */}
+            {/* Code Editor Module */}
             {activeModule === "code" && (
               <div className="flex flex-col gap-4 p-4 sm:p-5 animate-fadeIn h-full">
-                <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2 min-h-0" style={{ height: "calc(100vh - 220px)" }}>
+                <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2 min-h-0" style={{ height: "calc(100vh - 200px)" }}>
                   <CodeEditor
                     value={sourceCode} onChange={setSourceCode} label="Source Workflow" onSmartUpload={() => setShowSmartUpload(true)}
                     badge={detection && detection.platform !== "unknown" ? { text: detection.platform === "aws-step-functions" ? "ASL" : "Logic Apps", variant: detection.platform === "aws-step-functions" ? "aws" : "azure" } : undefined}
@@ -354,16 +338,16 @@ export default function Home() {
 
                 {/* Corrections bar */}
                 {hasUserEdits && (
-                  <div className="glass-card-static flex items-center justify-between gap-3 px-5 py-3 animate-slideUp" style={{ borderColor: "rgba(251,191,36,0.2)" }}>
+                  <div className="glass-card-static flex items-center justify-between gap-3 px-5 py-3 animate-slideUp">
                     <div className="flex items-center gap-3">
                       <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: "var(--warning-bg)" }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2" strokeLinecap="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                       </div>
-                      <p className="text-[12px] font-bold" style={{ color: "var(--warning)" }}>Output edited — submit corrections to improve future migrations</p>
+                      <p className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>Output edited — submit corrections to improve future migrations</p>
                     </div>
                     <div className="flex items-center gap-2">
                       {correctionsFeedback && <span className="text-[11px] font-bold animate-fadeIn" style={{ color: "var(--success)" }}>{correctionsFeedback}</span>}
-                      <button onClick={handleSubmitCorrections} disabled={isSubmittingCorrections} className="btn-press rounded-lg px-4 py-2 text-[11px] font-bold text-white shadow-md transition-all hover:shadow-lg disabled:opacity-50" style={{ background: "var(--warning)" }}>
+                      <button onClick={handleSubmitCorrections} disabled={isSubmittingCorrections} className="btn-press rounded-lg px-4 py-2 text-[11px] font-bold text-black shadow-md transition-all hover:shadow-lg disabled:opacity-50" style={{ background: "var(--warning)" }}>
                         {isSubmittingCorrections ? "Learning..." : "Submit"}
                       </button>
                     </div>
@@ -371,12 +355,12 @@ export default function Home() {
                 )}
                 {correctionsFeedback && !hasUserEdits && (
                   <div className="flex items-center justify-center">
-                    <span className="rounded-full px-4 py-1.5 text-[12px] font-semibold animate-fadeIn" style={{ background: "rgba(16,185,129,0.15)", color: "var(--success)" }}>{correctionsFeedback}</span>
+                    <span className="rounded-full px-4 py-1.5 text-[12px] font-semibold animate-fadeIn" style={{ background: "var(--success-bg)", color: "var(--success)" }}>{correctionsFeedback}</span>
                   </div>
                 )}
                 {outputCode && (
                   <div className="flex justify-center">
-                    <button onClick={() => setShowDiff(true)} className="btn-press glass-card-static flex items-center gap-2 px-4 py-2 text-[11px] font-bold transition-all hover:shadow-md" style={{ color: "var(--text-muted)" }}>
+                    <button onClick={() => setShowDiff(true)} className="btn-press flex items-center gap-2 rounded-lg px-4 py-2 text-[11px] font-semibold transition-all hover:bg-[var(--hover-bg)]" style={{ color: "var(--text-muted)", border: "1px solid var(--border-subtle)" }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v18" /><rect x="2" y="3" width="7" height="18" rx="1" /><rect x="15" y="3" width="7" height="18" rx="1" /></svg>
                       View Diff
                     </button>
@@ -385,33 +369,33 @@ export default function Home() {
               </div>
             )}
 
-            {/* ── MODULE 2: Workflow Graph ──────────────────────────────── */}
+            {/* Workflow Graph Module */}
             {activeModule === "workflow" && (
               <div className="p-4 sm:p-5 animate-fadeIn h-full">
                 {outputCode ? (
                   <WorkflowGraphView sourceCode={sourceCode} outputCode={outputCode} direction={migrationDirection} comparison={comparison} />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl" style={{ background: "var(--accent-bg)", border: "1px solid var(--border-primary)" }}>
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5"><circle cx="12" cy="5" r="3" /><line x1="12" y1="8" x2="12" y2="14" /><circle cx="6" cy="19" r="3" /><circle cx="18" cy="19" r="3" /><line x1="12" y1="14" x2="6" y2="16" /><line x1="12" y1="14" x2="18" y2="16" /></svg>
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: "var(--accent-bg)", border: "1px solid var(--border-primary)" }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5"><circle cx="12" cy="5" r="3" /><line x1="12" y1="8" x2="12" y2="14" /><circle cx="6" cy="19" r="3" /><circle cx="18" cy="19" r="3" /><line x1="12" y1="14" x2="6" y2="16" /><line x1="12" y1="14" x2="18" y2="16" /></svg>
                     </div>
                     <p className="text-[14px] font-semibold" style={{ color: "var(--text-muted)" }}>No workflow to visualize</p>
-                    <p className="text-[12px]" style={{ color: "var(--text-muted)", opacity: 0.7 }}>Run a migration first to see the workflow graph</p>
+                    <p className="text-[12px]" style={{ color: "var(--text-muted)", opacity: 0.6 }}>Run a migration first to see the resource graph</p>
                   </div>
                 )}
               </div>
             )}
 
-            {/* ── MODULE 3: Manual Process Solutions ────────────────────── */}
+            {/* Manual Fixes Module */}
             {activeModule === "manual" && (
               <div className="p-4 sm:p-5 animate-fadeIn space-y-4">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: "var(--warning-bg)" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2" strokeLinecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: "var(--warning-bg)", border: "1px solid rgba(251,191,36,0.15)" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2" strokeLinecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
                   </div>
                   <div>
                     <h2 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>Manual Process Solutions</h2>
-                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Items that require manual configuration before deployment</p>
+                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Items that require manual configuration</p>
                   </div>
                 </div>
 
@@ -420,11 +404,11 @@ export default function Home() {
                   if (todoItems.length === 0) {
                     return (
                       <div className="flex flex-col items-center justify-center py-16 gap-3">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.2)" }}>
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: "var(--success-bg)", border: "1px solid rgba(34,211,238,0.15)" }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
                         </div>
                         <p className="text-[14px] font-semibold" style={{ color: "var(--success)" }}>All clear</p>
-                        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>{outputCode ? "No manual actions required for this migration" : "Run a migration to check for manual action items"}</p>
+                        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>{outputCode ? "No manual actions required" : "Run a migration to check for action items"}</p>
                       </div>
                     );
                   }
@@ -435,24 +419,20 @@ export default function Home() {
                         const isPending = item.includes("PENDING") || item.includes("SCHEDULE");
                         const isReplace = item.includes("REPLACE");
                         const variant = isGap ? "error" : isPending ? "warning" : isReplace ? "info" : "warning";
-                        const variantColors = {
-                          error: { bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.2)", text: "#f87171", badge: "rgba(239,68,68,0.15)", badgeText: "#f87171" },
-                          warning: { bg: "rgba(251,191,36,0.06)", border: "rgba(251,191,36,0.2)", text: "#fbbf24", badge: "rgba(251,191,36,0.12)", badgeText: "#fbbf24" },
-                          info: { bg: "rgba(96,165,250,0.06)", border: "rgba(96,165,250,0.2)", text: "#60a5fa", badge: "rgba(96,165,250,0.12)", badgeText: "#60a5fa" },
+                        const colors = {
+                          error: { bg: "rgba(251,113,133,0.06)", border: "rgba(251,113,133,0.15)", text: "#fb7185", badge: "rgba(251,113,133,0.12)" },
+                          warning: { bg: "rgba(251,191,36,0.06)", border: "rgba(251,191,36,0.15)", text: "#fbbf24", badge: "rgba(251,191,36,0.12)" },
+                          info: { bg: "rgba(56,189,248,0.06)", border: "rgba(56,189,248,0.15)", text: "#38bdf8", badge: "rgba(56,189,248,0.12)" },
                         };
-                        const c = variantColors[variant];
+                        const c = colors[variant];
                         return (
-                          <div key={i} className="flex items-start gap-3 rounded-xl p-4 transition-all" style={{ background: c.bg, border: `1px solid ${c.border}` }}>
+                          <div key={i} className="flex items-start gap-3 rounded-xl p-4" style={{ background: c.bg, border: `1px solid ${c.border}` }}>
                             <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: c.badge }}>
-                              {isGap ? (
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c.text} strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" /></svg>
-                              ) : (
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c.text} strokeWidth="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
-                              )}
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c.text} strokeWidth="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
                             </div>
                             <p className="flex-1 text-[13px] font-medium" style={{ color: c.text }}>{item}</p>
-                            <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider" style={{ background: c.badge, color: c.badgeText }}>
-                              {isGap ? "Gap" : isPending ? "Pending" : "Replace"}
+                            <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider" style={{ background: c.badge, color: c.text }}>
+                              {isGap ? "Gap" : isPending ? "Pending" : "Action"}
                             </span>
                           </div>
                         );
@@ -463,99 +443,97 @@ export default function Home() {
               </div>
             )}
 
-            {/* ── MODULE 4: Error / Audit Log ────────────────────────────── */}
+            {/* Audit Log Module */}
             {activeModule === "errors" && (
               <div className="p-4 sm:p-5 animate-fadeIn space-y-4">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: errorCount > 0 ? "rgba(239,68,68,0.12)" : "rgba(16,185,129,0.12)", border: `1px solid ${errorCount > 0 ? "rgba(239,68,68,0.2)" : "rgba(16,185,129,0.2)"}` }}>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: errorCount > 0 ? "var(--danger-bg)" : "var(--success-bg)", border: `1px solid ${errorCount > 0 ? "rgba(251,113,133,0.15)" : "rgba(34,211,238,0.15)"}` }}>
                     {errorCount > 0 ? (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2" strokeLinecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2" strokeLinecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>
                     ) : (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
                     )}
                   </div>
                   <div>
-                    <h2 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>Schema Validation {totalIssues > 0 ? `(${totalIssues} issue${totalIssues !== 1 ? "s" : ""})` : ""}</h2>
+                    <h2 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>Schema Validation {totalIssues > 0 ? `(${totalIssues})` : ""}</h2>
                     <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                      {errorCount > 0 ? `${errorCount} error${errorCount > 1 ? "s" : ""} must be fixed before deployment`
-                        : warningCount > 0 ? `${warningCount} warning${warningCount > 1 ? "s" : ""} — review recommended`
-                        : outputCode ? "No validation issues found" : "Run a migration to check for errors"}
+                      {errorCount > 0 ? `${errorCount} error${errorCount > 1 ? "s" : ""} must be fixed`
+                        : warningCount > 0 ? `${warningCount} warning${warningCount > 1 ? "s" : ""} to review`
+                        : outputCode ? "No validation issues" : "Run a migration to validate"}
                     </p>
                   </div>
                 </div>
 
                 {validationIssues.filter((i) => i.severity === "error").map((issue, i) => (
-                  <div key={`e-${i}`} className="flex items-start gap-3 rounded-xl p-4" style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)" }}>
-                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: "rgba(239,68,68,0.12)" }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" /></svg>
+                  <div key={`e-${i}`} className="flex items-start gap-3 rounded-xl p-4" style={{ background: "var(--danger-bg)", border: "1px solid rgba(251,113,133,0.15)" }}>
+                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: "rgba(251,113,133,0.12)" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" /></svg>
                     </div>
-                    <div className="flex-1"><p className="text-[13px] font-medium" style={{ color: "#f87171" }}>{issue.message}</p>{issue.path && <p className="mt-1 text-[11px] font-mono" style={{ color: "rgba(248,113,113,0.6)" }}>{issue.path}</p>}</div>
-                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171" }}>Error</span>
+                    <div className="flex-1"><p className="text-[13px] font-medium" style={{ color: "var(--error)" }}>{issue.message}</p>{issue.path && <p className="mt-1 text-[11px] font-mono" style={{ color: "rgba(251,113,133,0.6)" }}>{issue.path}</p>}</div>
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(251,113,133,0.12)", color: "var(--error)" }}>Error</span>
                   </div>
                 ))}
 
                 {validationIssues.filter((i) => i.severity === "warning").map((issue, i) => (
-                  <div key={`w-${i}`} className="flex items-start gap-3 rounded-xl p-4" style={{ background: "rgba(251,191,36,0.05)", border: "1px solid rgba(251,191,36,0.15)" }}>
+                  <div key={`w-${i}`} className="flex items-start gap-3 rounded-xl p-4" style={{ background: "var(--warning-bg)", border: "1px solid rgba(251,191,36,0.15)" }}>
                     <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: "rgba(251,191,36,0.1)" }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>
                     </div>
-                    <div className="flex-1"><p className="text-[13px] font-medium" style={{ color: "#fbbf24" }}>{issue.message}</p>{issue.path && <p className="mt-1 text-[11px] font-mono" style={{ color: "rgba(251,191,36,0.5)" }}>{issue.path}</p>}</div>
-                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(251,191,36,0.1)", color: "#fbbf24" }}>Warning</span>
+                    <div className="flex-1"><p className="text-[13px] font-medium" style={{ color: "var(--warning)" }}>{issue.message}</p>{issue.path && <p className="mt-1 text-[11px] font-mono" style={{ color: "rgba(251,191,36,0.5)" }}>{issue.path}</p>}</div>
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(251,191,36,0.1)", color: "var(--warning)" }}>Warning</span>
                   </div>
                 ))}
 
                 {error && (
-                  <div className="flex items-start gap-3 rounded-xl p-4" style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)" }}>
-                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: "rgba(239,68,68,0.12)" }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" /></svg>
+                  <div className="flex items-start gap-3 rounded-xl p-4" style={{ background: "var(--danger-bg)", border: "1px solid rgba(251,113,133,0.15)" }}>
+                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: "rgba(251,113,133,0.12)" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" /></svg>
                     </div>
-                    <p className="flex-1 text-[13px] font-medium" style={{ color: "#f87171" }}>{error}</p>
-                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171" }}>API Error</span>
+                    <p className="flex-1 text-[13px] font-medium" style={{ color: "var(--error)" }}>{error}</p>
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(251,113,133,0.12)", color: "var(--error)" }}>API Error</span>
                   </div>
                 )}
 
                 {totalIssues === 0 && !error && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.2)" }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: "var(--success-bg)", border: "1px solid rgba(34,211,238,0.15)" }}>
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
                     </div>
                     <p className="text-[14px] font-semibold" style={{ color: "var(--success)" }}>{outputCode ? "No errors detected" : "Ready to validate"}</p>
-                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>{outputCode ? "Schema validation passed" : "Run a migration to check for schema errors"}</p>
+                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>{outputCode ? "Schema validation passed" : "Run a migration to check for errors"}</p>
                   </div>
                 )}
               </div>
             )}
           </div>
 
-          {/* ─── Status Bar ────────────────────────────────────────────── */}
-          <div className="shrink-0 flex items-center justify-between border-t px-4" style={{ height: "var(--statusbar-height)", borderColor: "var(--border-subtle)", background: "rgba(8,10,22,0.9)", backdropFilter: "blur(8px)" }}>
+          {/* Status Bar */}
+          <div className="shrink-0 flex items-center justify-between border-t px-4" style={{ height: "var(--statusbar-height)", borderColor: "var(--border-subtle)", background: "rgba(10, 12, 26, 0.9)" }}>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5">
-                <div className="status-dot" style={{ background: "var(--success)" }} />
-                <span className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>API: Connected</span>
+                <div className="status-dot" />
+                <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>Connected</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-                <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>Latency: {apiLatency !== null ? `${apiLatency}ms` : "—"}</span>
-              </div>
-              <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)", opacity: 0.6 }}>Engine: Gemini 2.5 Flash</span>
+              {apiLatency !== null && (
+                <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>{apiLatency}ms</span>
+              )}
             </div>
-            <div className="flex items-center gap-4">
-              <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>Active Nodes: {outputCode ? "Ready" : "Idle"}</span>
-              <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)", opacity: 0.5 }}>v3.2.0</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>Gemini 3.5 Flash</span>
+              <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)", opacity: 0.4 }}>v3.2.0</span>
             </div>
           </div>
         </main>
       </div>
 
-      {/* ─── Migration Log Drawer ───────────────────────────────────────── */}
+      {/* Log Drawer */}
       {showLogDrawer && (
         <>
           <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setShowLogDrawer(false)} />
-          <div className="fixed right-0 top-0 z-50 flex h-full w-[420px] max-w-[90vw] flex-col border-l shadow-2xl animate-slideInRight" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-primary)", backdropFilter: "blur(24px)" }}>
+          <div className="fixed right-0 top-0 z-50 flex h-full w-[420px] max-w-[90vw] flex-col border-l shadow-2xl animate-slideInRight" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-primary)" }}>
             <div className="flex items-center justify-between border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
               <div className="flex items-center gap-2.5">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="16" x2="8" y1="13" y2="13" /><line x1="16" x2="8" y1="17" y2="17" /></svg>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /></svg>
                 <span className="text-[14px] font-bold" style={{ color: "var(--text-bright)" }}>Migration Log</span>
                 {logs.length > 0 && <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: "var(--accent-bg)", color: "var(--accent)" }}>{logs.length}</span>}
               </div>
@@ -567,7 +545,7 @@ export default function Home() {
               <MigrationLog logs={logs} isLoading={isLoading} error={error} validationIssues={validationIssues} />
               {!isLoading && logs.length === 0 && !error && (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /></svg>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /></svg>
                   <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>No migration logs yet</p>
                 </div>
               )}
@@ -576,7 +554,7 @@ export default function Home() {
         </>
       )}
 
-      {/* ─── Modals ──────────────────────────────────────────────────────── */}
+      {/* Modals */}
       <SmartUploadModal isOpen={showSmartUpload} onClose={() => setShowSmartUpload(false)} onGenerated={handleSmartUploadGenerated} />
       <KeyboardShortcutsModal isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} shortcuts={shortcutList} />
       <IaCExportModal isOpen={showIaCExport} onClose={() => setShowIaCExport(false)} outputCode={outputCode} direction={migrationDirection} />
