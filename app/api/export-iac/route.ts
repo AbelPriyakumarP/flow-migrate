@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { IAC_SYSTEM_PROMPT, getIaCPrompt, getIaCFilename, type IaCFormat } from "@/lib/prompts-iac";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,20 +29,49 @@ export async function POST(request: NextRequest) {
 
     const userPrompt = getIaCPrompt(direction, format, workflowJson);
 
-    const models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+    const models = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.0-flash"];
     let result;
     let lastError: unknown;
 
     for (const modelName of models) {
       try {
-        const model = genAI.getGenerativeModel({
+        console.log(`[iac-export] Trying model: ${modelName}`);
+        const response = await genAI.models.generateContent({
           model: modelName,
-          systemInstruction: IAC_SYSTEM_PROMPT,
+          contents: userPrompt,
+          config: {
+            systemInstruction: IAC_SYSTEM_PROMPT,
+            ...(modelName.includes("2.5") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          },
         });
-        result = await model.generateContent(userPrompt);
+        result = response;
+        console.log(`[iac-export] Model ${modelName} succeeded`);
         break;
       } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.error(`[iac-export] Model ${modelName} failed:`, errMsg.slice(0, 200));
         lastError = e;
+
+        // Retry on 503 once
+        const is503 = errMsg.includes("503") || errMsg.includes("UNAVAILABLE");
+        if (is503) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          try {
+            const retryResponse = await genAI.models.generateContent({
+              model: modelName,
+              contents: userPrompt,
+              config: {
+                systemInstruction: IAC_SYSTEM_PROMPT,
+                ...(modelName.includes("2.5") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+              },
+            });
+            result = retryResponse;
+            console.log(`[iac-export] Model ${modelName} succeeded on retry`);
+            break;
+          } catch (retryErr) {
+            lastError = retryErr;
+          }
+        }
         continue;
       }
     }
@@ -51,7 +80,7 @@ export async function POST(request: NextRequest) {
       throw lastError || new Error("All models failed");
     }
 
-    let content = result.response.text().trim();
+    let content = (result.text ?? "").trim();
 
     // Strip markdown fences if present
     const fenceMatch = content.match(/```(?:(?:hcl|terraform|json|yaml)\s*)?([\s\S]*?)```/);
@@ -77,7 +106,7 @@ export async function POST(request: NextRequest) {
       format,
     });
   } catch (error) {
-    console.error("[IaC Export] Error:", error);
+    console.error("[iac-export] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Export failed" },
       { status: 500 }
