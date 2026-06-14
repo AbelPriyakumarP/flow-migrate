@@ -1,0 +1,638 @@
+{
+  "Comment": "PRISM Production Pipeline — nightly 9PM UTC. Sequential ingestion (account concurrency limit=10), dynamic validation paths, SSM hard FAIL gate.",
+  "StartAt": "IngestCMDB",
+  "States": {
+    "IngestCMDB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-servicenow-cmdb",
+        "Payload": {}
+      },
+      "ResultPath": "$.cmdb_result",
+      "Next": "IngestIncident",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.cmdb_error",
+          "Next": "IngestIncidentAnyway"
+        }
+      ]
+    },
+    "IngestIncidentAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- ServiceNow CMDB failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : ServiceNow CMDB\nLambda  : ingest-servicenow-cmdb\n\nWhat Happened\n---------------------------------------------\n  The ServiceNow CMDB Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for ServiceNow CMDB was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on ServiceNow CMDB\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-servicenow-cmdb\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.cmdb_alert",
+      "Next": "IngestIncident"
+    },
+    "IngestIncident": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-servicenow-incident",
+        "Payload": {}
+      },
+      "ResultPath": "$.incident_result",
+      "Next": "IngestRequest",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.incident_error",
+          "Next": "IngestRequestAnyway"
+        }
+      ]
+    },
+    "IngestRequestAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- ServiceNow Incidents failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : ServiceNow Incidents\nLambda  : ingest-servicenow-incident\n\nWhat Happened\n---------------------------------------------\n  The ServiceNow Incidents Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for ServiceNow Incidents was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on ServiceNow Incidents\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-servicenow-incident\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.incident_alert",
+      "Next": "IngestRequest"
+    },
+    "IngestRequest": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-servicenow-request",
+        "Payload": {}
+      },
+      "ResultPath": "$.request_result",
+      "Next": "IngestJamf",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.request_error",
+          "Next": "IngestJamfAnyway"
+        }
+      ]
+    },
+    "IngestJamfAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- ServiceNow Procurement failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : ServiceNow Procurement\nLambda  : ingest-servicenow-request\n\nWhat Happened\n---------------------------------------------\n  The ServiceNow Procurement Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for ServiceNow Procurement was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on ServiceNow Procurement\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-servicenow-request\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.request_alert",
+      "Next": "IngestJamf"
+    },
+    "IngestJamf": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-jamf-flatten",
+        "Payload": {}
+      },
+      "ResultPath": "$.jamf_result",
+      "Next": "IngestIntune",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.jamf_error",
+          "Next": "IngestIntuneAnyway"
+        }
+      ]
+    },
+    "IngestIntuneAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- Jamf Pro failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : Jamf Pro\nLambda  : ingest-jamf-flatten\n\nWhat Happened\n---------------------------------------------\n  The Jamf Pro Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for Jamf Pro was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on Jamf Pro\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-jamf-flatten\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.jamf_alert",
+      "Next": "IngestIntune"
+    },
+    "IngestIntune": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-intune",
+        "Payload": {}
+      },
+      "ResultPath": "$.intune_result",
+      "Next": "IngestSynthetic",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.intune_error",
+          "Next": "IngestSyntheticAnyway"
+        }
+      ]
+    },
+    "IngestSyntheticAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- Microsoft Intune failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : Microsoft Intune\nLambda  : ingest-intune\n\nWhat Happened\n---------------------------------------------\n  The Microsoft Intune Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for Microsoft Intune was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on Microsoft Intune\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-intune\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.intune_alert",
+      "Next": "IngestSynthetic"
+    },
+    "IngestSynthetic": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-synthetic-delta",
+        "Payload": {}
+      },
+      "ResultPath": "$.synthetic_result",
+      "Next": "IngestOTX",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.synthetic_error",
+          "Next": "IngestOTXAnyway"
+        }
+      ]
+    },
+    "IngestOTXAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- Synthetic FinOps failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : Synthetic FinOps\nLambda  : ingest-synthetic-delta\n\nWhat Happened\n---------------------------------------------\n  The Synthetic FinOps Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for Synthetic FinOps was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on Synthetic FinOps\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-synthetic-delta\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.synthetic_alert",
+      "Next": "IngestOTX"
+    },
+    "IngestOTX": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-otx",
+        "Payload": {}
+      },
+      "ResultPath": "$.otx_result",
+      "Next": "IngestSyntheticCTI",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.otx_error",
+          "Next": "IngestSyntheticCTIAnyway"
+        }
+      ]
+    },
+    "IngestSyntheticCTIAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- OTX Threat Intel failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : OTX Threat Intel\nLambda  : ingest-otx\n\nWhat Happened\n---------------------------------------------\n  The OTX Threat Intel Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for OTX Threat Intel was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on OTX Threat Intel\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-otx\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.otx_alert",
+      "Next": "IngestSyntheticCTI"
+    },
+    "IngestSyntheticCTI": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "ingest-synthetic-cti",
+        "Payload": {}
+      },
+      "ResultPath": "$.synthetic_cti_result",
+      "Next": "BuildValidationItems",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "BuildValidationItemsAnyway",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CTIThreatScannerAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- Synthetic CTI failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : Synthetic CTI\nLambda  : ingest-synthetic-cti\n\nWhat Happened\n---------------------------------------------\n  The Synthetic CTI Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for Synthetic CTI was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on Synthetic CTI\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/ingest-synthetic-cti\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.synthetic_cti_alert",
+      "Next": "GoldAIInsights"
+    },
+    "CTIThreatScanner": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "cti-threat-scanner",
+        "Payload": {}
+      },
+      "ResultPath": "$.cti_scan_result",
+      "Next": "GoldAIInsights",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "CTIThreatScannerAnyway",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "BuildValidationItemsAnyway": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Ingest Alert -- CTI Threat Scanner failed",
+        "Message": "PRISM Pipeline -- Ingest Failure Alert\n=======================================================\nSource  : CTI Threat Scanner\nLambda  : cti-threat-scanner\n\nWhat Happened\n---------------------------------------------\n  The CTI Threat Scanner Lambda failed during the nightly run.\n  The pipeline will continue with remaining sources.\n  Bronze data for CTI Threat Scanner was NOT updated tonight.\n\nImpact\n---------------------------------------------\n  Silver and Gold tables that depend on CTI Threat Scanner\n  will reflect the last successful ingest instead.\n\nNext Steps\n---------------------------------------------\n  1. Check Lambda logs: /aws/lambda/cti-threat-scanner\n  2. Check Step Functions: pipeline-nightly-sfn > latest run\n  3. Fix and re-trigger if needed, or wait for nightly retry.\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.cti_scan_alert",
+      "Next": "BuildValidationItems"
+    },
+    "BuildValidationItems": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "build-validation-items",
+        "Payload": {}
+      },
+      "ResultPath": "$.build_result",
+      "Next": "ContractValidationMap",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.build_error",
+          "Next": "PipelineFailed"
+        }
+      ]
+    },
+    "ContractValidationMap": {
+      "Type": "Map",
+      "Comment": "Validate all 7 datasets in parallel against their contracts",
+      "ItemsPath": "$.build_result.Payload.validation_items",
+      "ItemSelector": {
+        "s3_bucket.$": "$$.Map.Item.Value.s3_bucket",
+        "s3_key.$": "$$.Map.Item.Value.s3_key",
+        "dataset_name.$": "$$.Map.Item.Value.dataset_name"
+      },
+      "Iterator": {
+        "StartAt": "ValidateSingleDataset",
+        "States": {
+          "ValidateSingleDataset": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "ingest-contract-validate",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "status.$": "$.Payload.status",
+              "dataset_name.$": "$.Payload.dataset_name",
+              "hard_failures.$": "$.Payload.hard_failures",
+              "warnings.$": "$.Payload.warnings",
+              "validation_report_key.$": "$.Payload.validation_report_key"
+            },
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.contract_validation_results",
+      "Next": "ProfilingCheckpoint",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.contract_error",
+          "Next": "ContractValidationPartialFailure"
+        }
+      ]
+    },
+    "ContractValidationPartialFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Pipeline Warning -- Contract validation failed for one or more datasets",
+        "Message": "PRISM -- Contract Validation Warning\n=======================================================\n\nOne or more Bronze datasets failed schema contract validation.\nThe pipeline is continuing, but affected datasets have been\nquarantined and will NOT flow into Silver.\n\nWhat This Means\n-------------------------------------------------------\n  Quarantined files are excluded from today's Silver transform.\n  Silver row counts may be lower than expected.\n  Gold insights for the affected source will use yesterday's data.\n\nNext Steps\n-------------------------------------------------------\n  1. Check which datasets were rejected:\n     aws s3 ls s3://bronze-quarantine-400528359101/ --recursive\n\n  2. Review the contract validation Lambda logs:\n     Log group: /aws/lambda/ingest-contract-validate\n\n  3. Fix the source data or update the contract file in:\n     s3://bronze-staged-400528359101/Contracts/\n\n  4. Re-trigger the pipeline or wait for the next nightly run.\n\nQuarantine bucket  : s3://bronze-quarantine-400528359101/\nContract files     : s3://bronze-staged-400528359101/Contracts/\nStep Functions     : pipeline-nightly-sfn > latest run\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.contract_alert_result",
+      "Next": "ProfilingCheckpoint"
+    },
+    "ProfilingCheckpoint": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "bronze-profiling-checkpoint",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.profiling_result",
+      "Next": "SilverQualityCheck",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.profiling_error",
+          "Next": "PipelineFailed"
+        }
+      ]
+    },
+    "SilverQualityCheck": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "silver-quality-check",
+        "Payload": {}
+      },
+      "ResultPath": "$.quality_result",
+      "Next": "QualityGateCheck",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.quality_error",
+          "Next": "QualityGateFailed"
+        }
+      ]
+    },
+    "QualityGateCheck": {
+      "Type": "Choice",
+      "Comment": "Hard FAIL if Silver quality check does not return PASS",
+      "Choices": [
+        {
+          "Variable": "$.quality_result.Payload.status",
+          "StringEquals": "PASS",
+          "Next": "SilverTransform"
+        }
+      ],
+      "Default": "QualityGateFailed"
+    },
+    "QualityGateFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Pipeline BLOCKED -- Silver quality gate failed, Gold update halted",
+        "Message": "PRISM -- Silver Quality Gate Blocked\n=======================================================\n\nThe Silver quality gate has FAILED. The pipeline has halted.\nGold tables are NOT being updated tonight.\n\nWhat This Means\n-------------------------------------------------------\n  All Gold Iceberg tables are frozen at yesterday's data.\n  QuickSight dashboards will show stale data until resolved.\n  The SSM gate flag is currently set to false -- this is\n  what is blocking Gold from running.\n\nNext Steps\n-------------------------------------------------------\n  1. Check which DQ checks failed:\n     Log group: /aws/lambda/silver-quality-check\n\n  2. Fix the root cause in Bronze source or Silver transform.\n\n  3. Reset the SSM gate once fixed:\n     aws ssm put-parameter \\\n       --name /pipeline/silver/quality_check_passed \\\n       --value true --overwrite --region us-east-1\n\n  4. Re-trigger if you cannot wait for the next nightly run:\n     aws stepfunctions start-execution \\\n       --state-machine-arn \\\n       arn:aws:states:us-east-1:400528359101:stateMachine/pipeline-nightly-sfn\n\nSSM gate  : /pipeline/silver/quality_check_passed\nLog group : /aws/lambda/silver-quality-check\nStep Fn   : pipeline-nightly-sfn > latest run\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "Next": "QualityGateFailState"
+    },
+    "QualityGateFailState": {
+      "Type": "Fail",
+      "Error": "QualityGateFailed",
+      "Cause": "Silver quality check did not return PASS — Gold execution blocked"
+    },
+    "SilverTransform": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "Silver_transform",
+        "Arguments": {
+          "--BRONZE_RAW_BUCKET": "bronze-raw-400528359101",
+          "--BRONZE_STAGED_BUCKET": "bronze-staged-400528359101",
+          "--SILVER_MASTER_BUCKET": "silver-master-devices-400528359101",
+          "--SILVER_UNCLASSIFIED_BUCKET": "silver-unclassified-assets-400528359101",
+          "--ZOMBIE_THRESHOLD_DAYS": "30",
+          "--SSM_PII_TOKEN_PATH": "/pipeline/pii-token-map",
+          "--datalake-formats": "iceberg",
+          "--enable-continuous-cloudwatch-log": "true",
+          "--enable-metrics": "true",
+          "--enable-job-insights": "false",
+          "--job-language": "python",
+          "--conf": "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.glue_catalog.warehouse=s3://silver-master-devices-400528359101/warehouse --conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog --conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO --conf spark.sql.defaultCatalog=glue_catalog"
+        }
+      },
+      "ResultPath": "$.silver_glue_result",
+      "Next": "GoldTransform",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.silver_error",
+          "Next": "PipelineFailed"
+        }
+      ]
+    },
+    "GoldTransform": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "gold-transform",
+        "Arguments": {
+          "--ENABLE_FINOPS": "true",
+          "--ENABLE_PLATFORM_COMPARISON": "true",
+          "--ENABLE_ASSET_LIFECYCLE": "true",
+          "--ENABLE_COMPLIANCE_POSTURE": "true",
+          "--ENABLE_SYSTEM_HEALTH": "true",
+          "--ENABLE_PROCUREMENT_INTEL": "true",
+          "--ENABLE_CTI": "true",
+          "--ZOMBIE_THRESHOLD_DAYS": "30",
+          "--SILVER_MASTER_BUCKET": "silver-master-devices-400528359101",
+          "--GOLD_FINOPS_BUCKET": "gold-finops-ledger-400528359101",
+          "--GOLD_PLATFORM_BUCKET": "gold-platform-comparison-400528359101",
+          "--GOLD_LIFECYCLE_BUCKET": "gold-asset-lifecycle-400528359101",
+          "--GOLD_COMPLIANCE_BUCKET": "gold-compliance-posture-400528359101",
+          "--GOLD_SYSTEM_HEALTH_BUCKET": "gold-system-health-400528359101",
+          "--ATHENA_RESULTS_BUCKET": "gold-athena-results-400528359101",
+          "--datalake-formats": "iceberg",
+          "--enable-continuous-cloudwatch-log": "true",
+          "--enable-metrics": "true",
+          "--enable-job-insights": "false",
+          "--job-language": "python",
+          "--conf": "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.glue_catalog.warehouse=s3://gold-finops-ledger-400528359101/warehouse --conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog --conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO --conf spark.sql.defaultCatalog=glue_catalog"
+        }
+      },
+      "ResultPath": "$.gold_glue_result",
+      "Next": "RemediationEngine",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.gold_error",
+          "Next": "PipelineFailed"
+        }
+      ]
+    },
+    "GoldAIInsights": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "gold-ai-insights",
+        "Payload": {}
+      },
+      "ResultPath": "$.ai_result",
+      "Next": "GenerateDashboard",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.ai_error",
+          "Next": "PipelineFailed"
+        }
+      ]
+    },
+    "QuickSightRefresh": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "QuickSightRefreshLambda",
+        "Payload": {}
+      },
+      "ResultPath": "$.qs_result",
+      "Next": "PublishSLAMetric",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.qs_error",
+          "Next": "PublishSLAMetric"
+        }
+      ]
+    },
+    "PublishSLAMetric": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "publish-pipeline-metrics",
+        "Payload": {
+          "execution_arn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultPath": "$.sla_result",
+      "Next": "NotifyClientSuccess",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.sla_error",
+          "Next": "NotifyClientSuccess"
+        }
+      ]
+    },
+    "NotifyClientSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Pipeline -- Nightly Run Complete",
+        "Message": "PRISM Pipeline — Nightly Run Complete\n=======================================================\n\nThe PRISM nightly pipeline completed successfully.\nAll data has been refreshed with today's latest insights.\n\nRun Summary\n-------------------------------------------------------\n  All data sources ingested\n  Silver quality checks passed\n  Gold tables updated\n  Bedrock AI summary refreshed\n  Dashboard showing today's data\n\nWhat to Review\n-------------------------------------------------------\n  Open the PRISM Dashboard to check:\n    - FinOps: zombie count and wasted spend\n    - Compliance: device compliance posture\n    - CTI: any new threat intelligence findings\n    - Lifecycle: devices due for refresh\n\nDashboard : https://d32of2ss6u4eo7.cloudfront.net/index.html\nStep Functions : pipeline-nightly-sfn\n\nThis is an automated notification from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "ResultPath": "$.notify_result",
+      "Next": "PipelineSuccessEnd",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.notify_error",
+          "Next": "PipelineSuccessEnd"
+        }
+      ]
+    },
+    "PipelineSuccessEnd": {
+      "Type": "Succeed"
+    },
+    "PipelineFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:400528359101:alert-developer",
+        "Subject": "PRISM Pipeline FAILED -- Nightly run stopped at a critical stage",
+        "Message": "PRISM -- Critical Pipeline Failure\n=======================================================\n\nThe PRISM nightly pipeline failed at a critical stage and\ncould not continue. This is NOT an ingest warning -- a core\ntransform or gate step has failed.\n\nLikely Failure Points\n-------------------------------------------------------\n  - Silver_transform Glue job crashed (schema drift or OOM)\n  - gold-transform Glue job crashed (Iceberg write failure)\n  - gold-ai-insights Lambda timed out or Bedrock error\n  - SSM quality gate stuck at false from a previous run\n\nNext Steps\n-------------------------------------------------------\n  1. Find the failed state in Step Functions:\n     pipeline-nightly-sfn > latest execution (failed state in red)\n\n  2. Check the relevant log group:\n     Glue Silver  : AWS Glue > Jobs > Silver_transform > Logs\n     Glue Gold    : AWS Glue > Jobs > gold-transform > Logs\n     Bedrock      : /aws/lambda/gold-ai-insights\n\n  3. Check SSM gate is not stuck:\n     aws ssm get-parameter \\\n       --name /pipeline/silver/quality_check_passed \\\n       --region us-east-1\n\n  4. Reset gate if stuck (after confirming Silver is healthy):\n     aws ssm put-parameter \\\n       --name /pipeline/silver/quality_check_passed \\\n       --value true --overwrite --region us-east-1\n\n  5. Re-trigger once root cause is fixed:\n     aws stepfunctions start-execution \\\n       --state-machine-arn \\\n       arn:aws:states:us-east-1:400528359101:stateMachine/pipeline-nightly-sfn\n\nStep Functions : pipeline-nightly-sfn > latest execution\nGlue console   : AWS Glue > Jobs\nSSM gate       : /pipeline/silver/quality_check_passed\n\nThis is an automated alert from the PRISM pipeline.\nDo not reply to this message."
+      },
+      "Next": "PipelineFailState"
+    },
+    "PipelineFailState": {
+      "Type": "Fail",
+      "Error": "PipelineFailed",
+      "Cause": "Critical pipeline stage failed — check CloudWatch logs"
+    },
+    "GenerateDashboard": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "generate-dashboard-json",
+        "Payload": {
+          "run_date.$": "$$.Execution.StartTime"
+        }
+      },
+      "ResultPath": "$.dashboard_result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "QuickSightRefresh",
+          "ResultPath": "$.dashboard_error",
+          "Comment": "Dashboard gen failure is non-blocking — pipeline continues"
+        }
+      ],
+      "Next": "QuickSightRefresh",
+      "Comment": "Generate dashboard.json from all 13 Athena views and upload to S3"
+    },
+    "RemediationEngine": {
+      "Type": "Task",
+      "Comment": "PRISM Remediation Engine V1 — mock compliance and CTI remediation",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:400528359101:function:remediation-engine",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.remediationResult",
+      "Next": "CTIThreatScanner",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "CTIThreatScanner",
+          "ResultPath": "$.remediationError"
+        }
+      ]
+    }
+  }
+}

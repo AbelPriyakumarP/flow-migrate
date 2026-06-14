@@ -22,6 +22,7 @@ import {
   type WorkflowNode,
 } from "@/lib/workflow-graph";
 import type { ComparisonResult, StepMapping } from "@/lib/comparison";
+import { safeParseJson } from "@/lib/sanitize-json";
 
 // ─── Props ──────────────────────────────────────────────────────
 
@@ -399,16 +400,18 @@ export default function WorkflowGraphView({
     let targetGraph = { nodes: [] as WorkflowNode[], edges: [] as WorkflowEdge[] };
     const mappingLines: MappingLine[] = [];
 
-    try {
-      const sourceJson = JSON.parse(sourceCode);
-      const targetJson = JSON.parse(outputCode);
+    // Parse each side independently so a malformed migrated output never blanks
+    // the (valid) source graph, and vice versa.
+    const sourceJson = safeParseJson(sourceCode);
+    const targetJson = safeParseJson(outputCode);
 
+    try {
       if (direction === "aws-to-azure") {
-        sourceGraph = parseAWSStepFunctions(sourceJson);
-        targetGraph = parseAzureLogicApps(targetJson);
+        if (sourceJson) sourceGraph = parseAWSStepFunctions(sourceJson);
+        if (targetJson) targetGraph = parseAzureLogicApps(targetJson);
       } else {
-        sourceGraph = parseAzureLogicApps(sourceJson);
-        targetGraph = parseAWSStepFunctions(targetJson);
+        if (sourceJson) sourceGraph = parseAzureLogicApps(sourceJson);
+        if (targetJson) targetGraph = parseAWSStepFunctions(targetJson);
       }
 
       // Apply comparison status
@@ -498,6 +501,7 @@ export default function WorkflowGraphView({
               { icon: "⫽", label: "Parallel", color: "#86efac" },
               { icon: "↻", label: "Retry", color: "#60a5fa" },
               { icon: "⚡", label: "Catch", color: "#fb923c" },
+              { icon: "!", label: "Manual", color: "#8b5cf6" },
             ].map(item => (
               <span key={item.label} className="flex items-center gap-1 text-[10px] text-slate-500">
                 <span className="flex h-4 w-4 items-center justify-center rounded text-[8px]" style={{ backgroundColor: item.color + "25", color: item.color }}>{item.icon}</span>

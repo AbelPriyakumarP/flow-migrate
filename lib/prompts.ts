@@ -402,14 +402,18 @@ Focus ONLY on producing a structurally correct Azure Logic Apps JSON translation
 Your job: translate the ASL structure, action types, expressions, and control flow accurately. Return ONLY valid JSON:
 `;
 
-export const AZURE_TO_AWS_PROMPT = `Convert the following Azure Logic Apps workflow definition to a valid, deployable AWS Step Functions (ASL) definition.
+export const AZURE_TO_AWS_PROMPT = `Convert the following Azure Logic Apps workflow definition to a valid, deployable AWS Step Functions Amazon States Language (ASL) JSON definition.
 
-=== REQUIRED TOP-LEVEL STRUCTURE ===
+CRITICAL: Your output MUST be a valid AWS Step Functions ASL JSON object. Do NOT return Azure Logic Apps format. Do NOT include "$schema", "contentVersion", "triggers", or "actions" at the top level. The output MUST start with "Comment", "StartAt", and "States".
+
+=== REQUIRED TOP-LEVEL STRUCTURE (MANDATORY) ===
 {
   "Comment": "<description>",
   "StartAt": "<first_state_name>",
   "States": { ... }
 }
+
+The output MUST have ONLY these three top-level keys: Comment, StartAt, States. Nothing else.
 
 === CRITICAL RULES ===
 
@@ -447,6 +451,8 @@ Azure Exponential retry → BackoffRate: 2.0
 Azure Fixed retry → BackoffRate: 1.0
 "Catch": [{ "ErrorEquals": ["<error>"], "Next": "<handler_state>", "ResultPath": "$.error" }]
 Azure runAfter ["Failed", "TimedOut"] → Catch block.
+
+CRITICAL: Only create Catch blocks and Fail handler states when the source Azure workflow EXPLICITLY has failure handling (runAfter with "Failed" or "TimedOut"). Do NOT invent error handlers that don't exist in the source. If the source action has no failure handler, the ASL state should have NO Catch block. Translating faithfully means preserving the same error behavior — if the source lets errors propagate, the ASL output should too.
 
 RULE 5 — FAIL STATE:
 { "Type": "Fail", "Error": "<code>", "Cause": "<message>" }

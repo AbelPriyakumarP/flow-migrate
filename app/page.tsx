@@ -20,11 +20,9 @@ import KeyboardShortcutsModal from "@/components/keyboard-shortcuts-modal";
 import { useVersionHistory, type MigrationSnapshot } from "@/hooks/useVersionHistory";
 import VersionHistoryPanel from "@/components/version-history-panel";
 import DiffViewer from "@/components/diff-viewer";
-import { useCustomRules } from "@/hooks/useCustomRules";
-import CustomRulesPanel from "@/components/custom-rules-panel";
-import { applyPreRules, applyPostRules } from "@/lib/custom-rules";
 import BatchMigrationModal from "@/components/batch-migration-modal";
 import IaCExportModal from "@/components/iac-export-modal";
+import StepMappingSummary from "@/components/step-mapping-summary";
 
 type ActiveModule = "code" | "workflow" | "manual" | "errors";
 
@@ -54,7 +52,6 @@ export default function Home() {
 
   const { corrections, correctionCount, activeCount, addCorrections, removeCorrection, clearCorrections, getPromptBlock } = useCorrections();
   const { snapshots, isLoading: versionsLoading, saveSnapshot, removeSnapshot, clearAll: clearAllSnapshots } = useVersionHistory();
-  const { rules: customRules, addRule, updateRule, removeRule: removeCustomRule, toggleRule, clearAll: clearAllRules, activeCount: activeRuleCount } = useCustomRules();
 
   useEffect(() => {
     if (sourceCode.trim()) {
@@ -75,25 +72,21 @@ export default function Home() {
 
     try {
       const correctionsPrompt = getPromptBlock(migrationDirection);
-      const processedSource = applyPreRules(sourceCode, customRules, migrationDirection);
       const res = await fetch("/api/migrate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceCode: processedSource, targetPlatform: target, corrections: correctionsPrompt || null }),
+        body: JSON.stringify({ sourceCode, targetPlatform: target, corrections: correctionsPrompt || null }),
       });
       setApiLatency(Date.now() - startTime);
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Migration failed"); return; }
       const dir = data.direction || migrationDirection;
-      const finalOutput = applyPostRules(data.outputCode, customRules, dir);
-      setOutputCode(finalOutput); setOriginalAiOutput(finalOutput); setLogs(data.migrationLog || []);
+      setOutputCode(data.outputCode); setOriginalAiOutput(data.outputCode); setLogs(data.migrationLog || []);
       setValidationIssues(data.validationIssues || []); setComparison(data.comparison || null); setMigrationDirection(data.direction || "aws-to-azure");
       if (correctionsPrompt) setLogs((prev) => [...prev, `${activeCount(data.direction || migrationDirection)} learned correction(s) applied`]);
-      const ruleCount = activeRuleCount(dir);
-      if (ruleCount > 0) setLogs((prev) => [...prev, `${ruleCount} custom rule(s) applied`]);
-      saveSnapshot({ direction: dir, sourceCode, outputCode: finalOutput, migrationLog: data.migrationLog || [], validationIssues: data.validationIssues || [] });
+      saveSnapshot({ direction: dir, sourceCode, outputCode: data.outputCode, migrationLog: data.migrationLog || [], validationIssues: data.validationIssues || [] });
     } catch (err) { setError(err instanceof Error ? err.message : "Network error"); } finally { setIsLoading(false); }
-  }, [sourceCode, target, getPromptBlock, migrationDirection, activeCount, customRules, activeRuleCount, saveSnapshot]);
+  }, [sourceCode, target, getPromptBlock, migrationDirection, activeCount, saveSnapshot]);
 
   const handleOutputChange = useCallback((val: string) => { setOutputCode(val); setHasUserEdits(val !== originalAiOutput && originalAiOutput !== ""); }, [originalAiOutput]);
 
@@ -140,9 +133,21 @@ export default function Home() {
 
   const handleDownloadOutput = useCallback(() => {
     if (!outputCode) return;
-    const blob = new Blob([outputCode], { type: "application/json" }); const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "migrated-workflow.json"; a.click(); URL.revokeObjectURL(url);
-  }, [outputCode]);
+    try {
+      const blob = new Blob([outputCode], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = migrationDirection === "azure-to-aws" ? "step-functions-definition.json" : "logic-app-definition.json";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    } catch {
+      const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(outputCode);
+      window.open(dataUri, "_blank");
+    }
+  }, [outputCode, migrationDirection]);
 
   const shortcutsConfig: ShortcutConfig[] = useMemo(() => [
     { key: "enter", metaOrCtrl: true, label: "Migrate Workflow", description: "Run migration on the source workflow", action: () => { if (canMigrate) handleMigrate(); }, enabled: canMigrate },
@@ -160,7 +165,7 @@ export default function Home() {
   const errorCount = validationIssues.filter((i) => i.severity === "error").length;
   const warningCount = validationIssues.filter((i) => i.severity === "warning").length;
   const totalIssues = errorCount + warningCount;
-  const manualTodos = logs.filter((l) => l.includes("TODO") || l.includes("MANUAL") || l.includes("GAP_NOTICE") || l.includes("REPLACE") || l.includes("PENDING")).length;
+  const manualTodos = logs.filter((l) => l.includes("TODO") || l.includes("MANUAL") || l.includes("GAP_NOTICE") || l.includes("REPLACE") || l.includes("PENDING") || l.includes("⚠")).length;
 
   const sidebarNav: Array<{ id: ActiveModule; label: string; icon: React.ReactNode; badge?: number }> = [
     {
@@ -177,7 +182,7 @@ export default function Home() {
       badge: manualTodos > 0 ? manualTodos : undefined,
     },
     {
-      id: "errors", label: "Audit Log",
+      id: "errors", label: "Migration Log",
       icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>,
       badge: totalIssues > 0 ? totalIssues : undefined,
     },
@@ -199,7 +204,7 @@ export default function Home() {
         {/* ─── Sidebar ─────────────────────────────────────────────── */}
         <aside
           className="hidden md:flex w-[var(--sidebar-width)] flex-col border-r shrink-0"
-          style={{ borderColor: "var(--border-subtle)", background: "rgba(11, 14, 28, 0.92)", backdropFilter: "blur(20px)" }}
+          style={{ borderColor: "var(--border-subtle)", background: "var(--sidebar-bg)", backdropFilter: "blur(20px)" }}
         >
           {/* Logo */}
           <div className="px-5 pt-5 pb-3">
@@ -266,7 +271,7 @@ export default function Home() {
           {/* Toolbar */}
           <div
             className="flex items-center gap-3 border-b px-4 py-2.5 sm:px-5 shrink-0"
-            style={{ borderColor: "var(--border-subtle)", background: "rgba(13, 16, 33, 0.7)", backdropFilter: "blur(12px)" }}
+            style={{ borderColor: "var(--border-subtle)", background: "var(--toolbar-bar-bg)", backdropFilter: "blur(12px)" }}
           >
             <PlatformSelector detection={detection} target={target} onTargetChange={setTarget} />
 
@@ -282,7 +287,6 @@ export default function Home() {
               </div>
 
               <VersionHistoryPanel snapshots={snapshots} isLoading={versionsLoading} onLoad={handleLoadSnapshot} onDelete={removeSnapshot} onClearAll={clearAllSnapshots} />
-              <CustomRulesPanel rules={customRules} onAdd={addRule} onUpdate={updateRule} onRemove={removeCustomRule} onToggle={toggleRule} onClearAll={clearAllRules} activeCount={activeRuleCount(migrationDirection)} />
               <CorrectionsPanel corrections={corrections} onClear={clearCorrections} onRemove={removeCorrection} direction={migrationDirection} />
 
               {/* Execute button */}
@@ -335,6 +339,64 @@ export default function Home() {
                     badge={outputCode ? { text: target === "aws-step-functions" ? "ASL" : "Logic Apps", variant: target === "aws-step-functions" ? "aws" : "azure" } : undefined}
                   />
                 </div>
+
+                {/* Export Bar */}
+                {outputCode && (
+                  <div className="glass-card-static rounded-xl overflow-hidden animate-slideUp">
+                    <div className="flex items-center justify-between px-5 py-3" style={{ background: "var(--bg-secondary)" }}>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: validationIssues.filter(i => i.severity === "error").length === 0 ? "var(--success-bg)" : "var(--danger-bg)" }}>
+                          {validationIssues.filter(i => i.severity === "error").length === 0 ? (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" /></svg>
+                          )}
+                        </div>
+                        <div>
+                          <span className="text-[13px] font-bold" style={{ color: "var(--text-primary)" }}>
+                            {validationIssues.filter(i => i.severity === "error").length === 0 ? "Deploy Ready" : `${validationIssues.filter(i => i.severity === "error").length} Error${validationIssues.filter(i => i.severity === "error").length > 1 ? "s" : ""} — Fix Before Deploy`}
+                          </span>
+                          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                            {migrationDirection === "azure-to-aws" ? "AWS Step Functions ASL" : "Azure Logic Apps"} — {(() => { try { return Object.keys(JSON.parse(outputCode).States || JSON.parse(outputCode).actions || {}).length; } catch { return 0; } })()} {migrationDirection === "azure-to-aws" ? "states" : "actions"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(outputCode).catch(() => {});
+                          }}
+                          className="btn-press flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-semibold transition-all hover:bg-[var(--hover-bg)]"
+                          style={{ color: "var(--text-muted)", border: "1px solid var(--border-subtle)" }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                          Copy JSON
+                        </button>
+                        <button
+                          onClick={handleDownloadOutput}
+                          className="btn-press flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold transition-all hover:bg-[var(--hover-bg)]"
+                          style={{ color: "var(--accent)", border: "1px solid var(--border-primary)" }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7,10 12,15 17,10" /><line x1="12" x2="12" y1="15" y2="3" /></svg>
+                          Download
+                        </button>
+                        {outputCode && (
+                          <button
+                            onClick={() => setShowIaCExport(true)}
+                            className="btn-press flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-bold transition-all hover:bg-[var(--hover-bg)]"
+                            style={{ color: "var(--success)", border: "1px solid rgba(34,211,238,0.2)" }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 14a1 1 0 01-.78-1.63l9.9-10.2a.5.5 0 01.86.46l-1.92 6.02A1 1 0 0013 10h7a1 1 0 01.78 1.63l-9.9 10.2a.5.5 0 01-.86-.46l1.92-6.02A1 1 0 0011 14z" /></svg>
+                            Export IaC
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step Mapping Summary */}
+                {outputCode && <StepMappingSummary outputCode={outputCode} direction={migrationDirection} />}
 
                 {/* Corrections bar */}
                 {hasUserEdits && (
@@ -400,7 +462,7 @@ export default function Home() {
                 </div>
 
                 {(() => {
-                  const todoItems = logs.filter((l) => l.includes("TODO") || l.includes("MANUAL") || l.includes("GAP_NOTICE") || l.includes("REPLACE") || l.includes("PENDING") || l.includes("SCHEDULE_PENDING") || l.includes("MIGRATED_FROM") || l.includes("RENAMED_FROM"));
+                  const todoItems = logs.filter((l) => l.includes("TODO") || l.includes("MANUAL") || l.includes("GAP_NOTICE") || l.includes("REPLACE") || l.includes("PENDING") || l.includes("SCHEDULE_PENDING") || l.includes("MIGRATED_FROM") || l.includes("RENAMED_FROM") || l.includes("⚠"));
                   if (todoItems.length === 0) {
                     return (
                       <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -443,10 +505,11 @@ export default function Home() {
               </div>
             )}
 
-            {/* Audit Log Module */}
+            {/* Migration Log Module */}
             {activeModule === "errors" && (
-              <div className="p-4 sm:p-5 animate-fadeIn space-y-4">
-                <div className="flex items-center gap-3 mb-4">
+              <div className="p-4 sm:p-5 animate-fadeIn space-y-4 overflow-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
+                {/* Validation Section */}
+                <div className="flex items-center gap-3 mb-2">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: errorCount > 0 ? "var(--danger-bg)" : "var(--success-bg)", border: `1px solid ${errorCount > 0 ? "rgba(251,113,133,0.15)" : "rgba(34,211,238,0.15)"}` }}>
                     {errorCount > 0 ? (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2" strokeLinecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>
@@ -494,21 +557,61 @@ export default function Home() {
                   </div>
                 )}
 
-                {totalIssues === 0 && !error && (
+                {totalIssues === 0 && !error && !logs.length && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3">
                     <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: "var(--success-bg)", border: "1px solid rgba(34,211,238,0.15)" }}>
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
                     </div>
-                    <p className="text-[14px] font-semibold" style={{ color: "var(--success)" }}>{outputCode ? "No errors detected" : "Ready to validate"}</p>
-                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>{outputCode ? "Schema validation passed" : "Run a migration to check for errors"}</p>
+                    <p className="text-[14px] font-semibold" style={{ color: "var(--text-muted)" }}>Ready to validate</p>
+                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Run a migration to see the log</p>
                   </div>
+                )}
+
+                {/* Full Migration Log */}
+                {logs.length > 0 && (
+                  <>
+                    <div className="mt-6 mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.15em]" style={{ color: "var(--text-muted)" }}>Full Migration Log ({logs.length})</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {logs.map((logEntry, i) => {
+                        const isWarning = logEntry.includes("⚠") || logEntry.includes("MANUAL") || logEntry.includes("TODO") || logEntry.includes("REPLACE") || logEntry.includes("PENDING");
+                        const isSuccess = logEntry.includes("✓") || logEntry.includes("passed") || logEntry.includes("Valid JSON") || logEntry.includes("restored");
+                        const isInfo = logEntry.includes("──") || logEntry.includes("Source:") || logEntry.includes("Target:") || logEntry.includes("Post-processor") || logEntry.includes("ASL post-processor");
+                        const isPii = logEntry.includes("PII") || logEntry.includes("redact");
+
+                        let dotColor = "var(--text-muted)";
+                        let textColor = "var(--text-secondary)";
+                        let bg = "transparent";
+                        let badge = "";
+
+                        if (isWarning) {
+                          dotColor = "var(--warning)"; textColor = "var(--warning)"; bg = "var(--warning-bg)"; badge = "Action";
+                        } else if (isSuccess) {
+                          dotColor = "var(--success)"; textColor = "var(--success)";
+                        } else if (isPii) {
+                          dotColor = "var(--accent)"; textColor = "var(--text-accent)";
+                        } else if (isInfo) {
+                          textColor = "var(--text-muted)";
+                        }
+
+                        return (
+                          <div key={i} className="flex items-start gap-2.5 rounded-lg px-3 py-2" style={{ background: bg }}>
+                            <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor }} />
+                            <p className="flex-1 text-[12px] font-medium leading-relaxed" style={{ color: textColor }}>{logEntry}</p>
+                            {badge && <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: "rgba(251,191,36,0.1)", color: "var(--warning)" }}>{badge}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
               </div>
             )}
           </div>
 
           {/* Status Bar */}
-          <div className="shrink-0 flex items-center justify-between border-t px-4" style={{ height: "var(--statusbar-height)", borderColor: "var(--border-subtle)", background: "rgba(10, 12, 26, 0.9)" }}>
+          <div className="shrink-0 flex items-center justify-between border-t px-4" style={{ height: "var(--statusbar-height)", borderColor: "var(--border-subtle)", background: "var(--statusbar-bg)" }}>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5">
                 <div className="status-dot" />
@@ -530,7 +633,7 @@ export default function Home() {
       {showLogDrawer && (
         <>
           <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setShowLogDrawer(false)} />
-          <div className="fixed right-0 top-0 z-50 flex h-full w-[420px] max-w-[90vw] flex-col border-l shadow-2xl animate-slideInRight" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-primary)" }}>
+          <div className="fixed right-0 top-0 z-50 flex h-full w-[420px] max-w-[90vw] flex-col border-l shadow-2xl animate-slideInRight" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-card)" }}>
             <div className="flex items-center justify-between border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
               <div className="flex items-center gap-2.5">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /></svg>

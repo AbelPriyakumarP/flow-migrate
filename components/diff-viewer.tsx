@@ -3,6 +3,27 @@
 import { useMemo, useState, useCallback } from "react";
 import { lineByLineDiff, diffStats, type DiffLine } from "@/lib/json-diff";
 
+function copyToClipboard(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text: string) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
+
 interface DiffViewerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -36,7 +57,7 @@ export default function DiffViewer({
         return prefix + l.content;
       })
       .join("\n");
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
   }, [diffLines]);
 
   if (!isOpen) return null;

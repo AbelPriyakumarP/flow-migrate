@@ -5,8 +5,10 @@ import { detectPlatform, getMigrationDirection, type Platform } from "@/lib/dete
 import { validateAzureLogicApps, validateAWSStepFunctions, type ValidationIssue } from "@/lib/validator";
 import { compareWorkflows } from "@/lib/comparison";
 import { applyMigrationPostProcessing } from "@/lib/migration-post-processor";
+import { applyAslPostProcessing } from "@/lib/asl-post-processor";
 import { detectApplicableMappings, PRODUCTION_ASSESSMENT_30 } from "@/lib/service-registry";
 import { sanitizeWorkflowPii, restorePiiFromPlaceholders } from "@/lib/pii-sanitizer";
+import { sanitizeAiJson } from "@/lib/sanitize-json";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -144,6 +146,25 @@ export async function POST(request: NextRequest) {
     // ── Robust JSON extraction from AI output ─────────────────────────────
     outputCode = extractJsonFromAiOutput(outputCode);
 
+    // ── Repair common LLM escaping errors (over-escaped backslash runs and
+    //    raw control characters in long string values). Without this, large
+    //    workflows with multi-line message bodies fail JSON.parse, which blanks
+    //    the graph, the step-mapping summary, validation, and comparison. ────
+    if (outputCode) {
+      try {
+        JSON.parse(outputCode);
+      } catch {
+        const repaired = sanitizeAiJson(outputCode);
+        try {
+          JSON.parse(repaired);
+          outputCode = repaired;
+          console.log("[migrate] Repaired malformed JSON escaping from AI output");
+        } catch {
+          // Leave as-is; the downstream try/catch will report it gracefully.
+        }
+      }
+    }
+
     // ── Restore PII: put original values back into the migrated output ───
     if (piiResult.totalRedactions > 0) {
       outputCode = restorePiiFromPlaceholders(outputCode, piiResult.placeholderMap);
@@ -159,7 +180,7 @@ export async function POST(request: NextRequest) {
       let parsed = JSON.parse(outputCode);
       jsonParsed = true;
 
-      // ── Apply all 30 programmatic post-processing categories ──────────────
+      // ── Apply programmatic post-processing ──────────────────────────────────
       if (direction === "aws-to-azure") {
         try {
           const sourceJson = JSON.parse(sourceCode);
@@ -173,6 +194,78 @@ export async function POST(request: NextRequest) {
           ];
         } catch (ppErr) {
           migrationLog = [`Post-processor skipped — ${ppErr instanceof Error ? ppErr.message : "source JSON parse error"}`];
+        }
+      } else if (direction === "azure-to-aws") {
+        // ── ASL post-processor: enforce valid Step Functions structure ──────
+        try {
+          const sourceJson = JSON.parse(sourceCode);
+          const { output: processed, changesApplied } =
+            applyAslPostProcessing(parsed, sourceJson);
+          parsed = processed;
+          migrationLog = [
+            `ASL post-processor applied ${changesApplied.filter(c => !c.includes("no fixes needed")).length} fix(es)`,
+            ...changesApplied,
+          ];
+        } catch (ppErr) {
+          migrationLog = [`ASL post-processor skipped — ${ppErr instanceof Error ? ppErr.message : "error"}`];
+        }
+      }
+
+      // Final sanitization: ensure only valid top-level keys for each platform
+      if (direction === "azure-to-aws") {
+        const validAslTopKeys = new Set(["Comment", "StartAt", "States", "Version", "TimeoutSeconds"]);
+        for (const key of Object.keys(parsed)) {
+          if (!validAslTopKeys.has(key)) {
+            delete parsed[key];
+            migrationLog.push(`Removed invalid top-level field "${key}" from ASL output`);
+          }
+        }
+        // Ensure StartAt and States always exist
+        if (!parsed.States || typeof parsed.States !== "object") {
+          parsed.States = {};
+          migrationLog.push("⚠ MANUAL: No States found — output needs manual review");
+        }
+        if (!parsed.StartAt) {
+          const firstState = Object.keys(parsed.States as Record<string, unknown>)[0];
+          if (firstState) parsed.StartAt = firstState;
+        }
+
+        // State-level sanitization pass
+        const states = parsed.States as Record<string, Record<string, unknown>>;
+        const validStateTypes = new Set(["Task", "Pass", "Choice", "Wait", "Succeed", "Fail", "Parallel", "Map"]);
+        for (const [stateName, state] of Object.entries(states)) {
+          // Fix invalid or missing Type
+          if (!state.Type || !validStateTypes.has(state.Type as string)) {
+            if (state.Resource) {
+              state.Type = "Task";
+              migrationLog.push(`Fixed invalid Type in state "${stateName}" → Task (has Resource)`);
+            } else if (state.Choices) {
+              state.Type = "Choice";
+              migrationLog.push(`Fixed invalid Type in state "${stateName}" → Choice (has Choices)`);
+            } else if (state.Branches) {
+              state.Type = "Parallel";
+              migrationLog.push(`Fixed invalid Type in state "${stateName}" → Parallel (has Branches)`);
+            } else if (state.Result !== undefined && !state.Resource) {
+              state.Type = "Pass";
+              migrationLog.push(`Fixed invalid Type in state "${stateName}" → Pass (has Result)`);
+            } else if (!state.Type) {
+              state.Type = "Pass";
+              migrationLog.push(`⚠ State "${stateName}" had no Type — defaulted to Pass`);
+            }
+          }
+
+          // Ensure Task states have a Resource
+          if (state.Type === "Task" && !state.Resource) {
+            state.Resource = `arn:aws:lambda:us-east-1:ACCOUNT_ID:function:${stateName.replace(/\s+/g, "_")}`;
+            migrationLog.push(`⚠ MANUAL: Added placeholder Lambda ARN to Task state "${stateName}"`);
+          }
+
+          // Remove empty or null fields
+          for (const [k, v] of Object.entries(state)) {
+            if (v === null || v === undefined || v === "") {
+              delete state[k];
+            }
+          }
         }
       }
 
@@ -373,13 +466,41 @@ function buildMigrationLog(
       if (output.includes("RENAMED_FROM_AWS_SERVICE")) log.push("✓ CAT-7: AWS service names replaced with Azure equivalents");
 
     } else {
+      // azure-to-aws direction
       const actionCount = countActionsDeep(src);
       const stateCount = out.States ? Object.keys(out.States).length : 0;
       log.push(`Source: ${actionCount} actions detected in Logic Apps`);
       log.push(`Target: ${stateCount} states generated in Step Functions`);
+
+      // Detect AWS-specific placeholders that need manual configuration
+      if (output.includes("REGION") || output.includes("us-east-1")) {
+        const regionMatches = output.match(/REGION|us-east-1/g);
+        log.push(`⚠ MANUAL: ${regionMatches?.length || 0} AWS region placeholder(s) need your actual region (e.g., us-west-2)`);
+      }
+      if (output.includes("ACCOUNT") || output.includes("ACCOUNT_ID") || output.includes("123456789")) {
+        const accountMatches = output.match(/ACCOUNT_ID|ACCOUNT|123456789/g);
+        log.push(`⚠ MANUAL: ${accountMatches?.length || 0} AWS account ID placeholder(s) need your actual account ID`);
+      }
+      if (output.includes("TODO_REPLACE") || output.includes("TODO")) {
+        const todoMatches = output.match(/TODO_REPLACE|TODO/g);
+        log.push(`⚠ TODO: ${todoMatches?.length || 0} item(s) need manual configuration`);
+      }
+      // Check for Lambda function placeholders
+      if (output.includes("arn:aws:lambda")) {
+        const lambdaMatches = output.match(/arn:aws:lambda[^"]+/g) || [];
+        const placeholders = lambdaMatches.filter(a => a.includes("REGION") || a.includes("ACCOUNT"));
+        if (placeholders.length > 0) {
+          log.push(`⚠ REPLACE: ${placeholders.length} Lambda ARN(s) need real AWS account/region values`);
+        }
+      }
+      // Check for SQS/SNS/DynamoDB/S3 placeholders
+      if (output.includes("arn:aws:states:::sqs")) log.push("⚠ MANUAL: SQS queue URL placeholder needs your actual queue URL");
+      if (output.includes("arn:aws:states:::sns")) log.push("⚠ MANUAL: SNS topic ARN placeholder needs your actual topic ARN");
+      if (output.includes("arn:aws:states:::dynamodb")) log.push("⚠ MANUAL: DynamoDB table name/parameters need verification");
+      if (output.includes("arn:aws:states:::s3")) log.push("⚠ MANUAL: S3 bucket/key parameters need your actual bucket name");
     }
 
-    if (output.includes("TODO")) {
+    if (output.includes("TODO") && direction === "aws-to-azure") {
       const todoMatches = output.match(/TODO/g);
       log.push(`${todoMatches?.length || 0} item(s) need manual configuration (marked TODO)`);
     }

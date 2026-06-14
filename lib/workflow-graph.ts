@@ -68,6 +68,20 @@ const AZURE_TYPE_ICONS: Record<string, string> = {
   Request: "▶",
 };
 
+// ─── Placeholder / manual-config detection ──────────────────────
+// Flags a step that still contains values the user must fill in before
+// deploying (so the flow graph itself highlights manual work).
+const PLACEHOLDER_RE =
+  /ACCOUNT_ID|TODO|REPLACE|CHANGE_ME|YOUR[_-]|<[^>]+>|\$connections|sub-id|PENDING|GAP_NOTICE|example\.com|placeholder/i;
+
+function stepNeedsManualConfig(obj: unknown): boolean {
+  try {
+    return PLACEHOLDER_RE.test(JSON.stringify(obj));
+  } catch {
+    return false;
+  }
+}
+
 // ─── AWS Step Functions Parser ──────────────────────────────────
 
 export function parseAWSStepFunctions(json: Record<string, unknown>): ParsedGraph {
@@ -191,6 +205,7 @@ export function parseAWSStepFunctions(json: Record<string, unknown>): ParsedGrap
         resource: shortResource,
         hasRetry: !!state.Retry,
         hasCatch: !!state.Catch,
+        needsManualConfig: stepNeedsManualConfig(state),
       },
     });
   });
@@ -415,6 +430,7 @@ export function parseAzureLogicApps(json: Record<string, unknown>): ParsedGraph 
         isError,
         isBranch: actionType === "If" || actionType === "Switch" || actionType === "Scope",
         resource: getAzureResource(action),
+        needsManualConfig: stepNeedsManualConfig(action),
       },
     });
 

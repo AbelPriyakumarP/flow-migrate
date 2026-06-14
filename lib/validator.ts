@@ -264,19 +264,55 @@ function validateAction(
 export function validateAWSStepFunctions(json: Record<string, unknown>): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
+  // Top-level structure
   if (!json.StartAt) {
-    issues.push({ severity: "error", message: 'Missing "StartAt" property' });
+    issues.push({ severity: "error", message: 'Missing "StartAt" property — required for deployment' });
   }
   if (!json.States || typeof json.States !== "object") {
-    issues.push({ severity: "error", message: 'Missing "States" object' });
+    issues.push({ severity: "error", message: 'Missing "States" object — required for deployment' });
+  }
+
+  // Reject invalid top-level keys
+  const validTopKeys = new Set(["Comment", "StartAt", "States", "Version", "TimeoutSeconds"]);
+  for (const key of Object.keys(json)) {
+    if (!validTopKeys.has(key)) {
+      issues.push({ severity: "error", message: `Invalid top-level field "${key}" — ASL only allows Comment, StartAt, States, Version, TimeoutSeconds`, path: key });
+    }
   }
 
   if (json.States && typeof json.States === "object") {
     const states = json.States as Record<string, Record<string, unknown>>;
     const stateNames = new Set(Object.keys(states));
 
+    if (stateNames.size === 0) {
+      issues.push({ severity: "error", message: 'States object is empty — at least one state is required' });
+    }
+
     if (json.StartAt && !stateNames.has(json.StartAt as string)) {
       issues.push({ severity: "error", message: `StartAt references "${json.StartAt}" which doesn't exist in States` });
+    }
+
+    // Check for unreachable states
+    const reachable = new Set<string>();
+    if (json.StartAt) reachable.add(json.StartAt as string);
+    for (const [, state] of Object.entries(states)) {
+      if (state.Next) reachable.add(state.Next as string);
+      if (state.Default) reachable.add(state.Default as string);
+      if (Array.isArray(state.Choices)) {
+        for (const c of state.Choices as Record<string, unknown>[]) {
+          if (c.Next) reachable.add(c.Next as string);
+        }
+      }
+      if (Array.isArray(state.Catch)) {
+        for (const c of state.Catch as Record<string, unknown>[]) {
+          if (c.Next) reachable.add(c.Next as string);
+        }
+      }
+    }
+    for (const name of stateNames) {
+      if (!reachable.has(name)) {
+        issues.push({ severity: "warning", message: `State "${name}" is unreachable — no StartAt, Next, Default, or Catch points to it`, path: `States.${name}` });
+      }
     }
 
     for (const [name, state] of Object.entries(states)) {
@@ -354,6 +390,78 @@ function validateState(
   if (stateType === "Succeed") {
     if (state.Next) {
       issues.push({ severity: "error", message: `Succeed state must not have "Next"`, path });
+    }
+  }
+
+  // Task state must have Resource
+  if (stateType === "Task") {
+    if (!state.Resource) {
+      issues.push({ severity: "error", message: `Task state missing "Resource" — every Task needs a Resource ARN`, path });
+    } else {
+      const resource = String(state.Resource);
+      if (!resource.startsWith("arn:aws:") && !resource.startsWith("arn:aws-")) {
+        issues.push({ severity: "warning", message: `Resource "${resource.slice(0, 80)}" doesn't look like a valid AWS ARN`, path });
+      }
+    }
+  }
+
+  // Map state validation
+  if (stateType === "Map") {
+    if (!state.Iterator && !state.ItemProcessor) {
+      issues.push({ severity: "warning", message: `Map state should have "Iterator" (legacy) or "ItemProcessor" (preferred) defining the sub-workflow`, path });
+    }
+    const processor = (state.ItemProcessor || state.Iterator) as Record<string, unknown> | undefined;
+    if (processor) {
+      if (!processor.StartAt) {
+        issues.push({ severity: "error", message: `Map processor missing "StartAt"`, path: `${path}.ItemProcessor` });
+      }
+      if (processor.States && typeof processor.States === "object") {
+        const subStates = processor.States as Record<string, Record<string, unknown>>;
+        const subNames = new Set(Object.keys(subStates));
+        if (processor.StartAt && !subNames.has(processor.StartAt as string)) {
+          issues.push({ severity: "error", message: `Map processor StartAt "${processor.StartAt}" not found`, path: `${path}.ItemProcessor` });
+        }
+        for (const [sn, ss] of Object.entries(subStates)) {
+          validateState(sn, ss, subNames, issues, `${path}.ItemProcessor.States.${sn}`);
+        }
+      }
+    }
+  }
+
+  // Validate Retry blocks
+  if (Array.isArray(state.Retry)) {
+    for (let i = 0; i < (state.Retry as Record<string, unknown>[]).length; i++) {
+      const retry = (state.Retry as Record<string, unknown>[])[i];
+      if (!retry.ErrorEquals || !Array.isArray(retry.ErrorEquals)) {
+        issues.push({ severity: "error", message: `Retry[${i}] missing "ErrorEquals" array`, path: `${path}.Retry[${i}]` });
+      }
+      if (retry.MaxAttempts !== undefined && (typeof retry.MaxAttempts !== "number" || (retry.MaxAttempts as number) < 0)) {
+        issues.push({ severity: "warning", message: `Retry[${i}] "MaxAttempts" should be a non-negative number`, path: `${path}.Retry[${i}]` });
+      }
+      if (retry.IntervalSeconds !== undefined && (typeof retry.IntervalSeconds !== "number" || (retry.IntervalSeconds as number) < 1)) {
+        issues.push({ severity: "warning", message: `Retry[${i}] "IntervalSeconds" should be >= 1`, path: `${path}.Retry[${i}]` });
+      }
+    }
+  }
+
+  // Validate Catch blocks have ErrorEquals
+  if (Array.isArray(state.Catch)) {
+    for (let i = 0; i < (state.Catch as Record<string, unknown>[]).length; i++) {
+      const c = (state.Catch as Record<string, unknown>[])[i];
+      if (!c.ErrorEquals || !Array.isArray(c.ErrorEquals)) {
+        issues.push({ severity: "error", message: `Catch[${i}] missing "ErrorEquals" array`, path: `${path}.Catch[${i}]` });
+      }
+      if (!c.Next) {
+        issues.push({ severity: "error", message: `Catch[${i}] missing "Next" — must specify error handler state`, path: `${path}.Catch[${i}]` });
+      }
+    }
+  }
+
+  // Reject Azure fields that don't belong in ASL
+  const invalidAslFields = ["runAfter", "kind", "metadata", "runtimeConfiguration", "operationOptions", "expression", "inputs", "type_lower"];
+  for (const field of invalidAslFields) {
+    if (state[field] !== undefined) {
+      issues.push({ severity: "error", message: `Invalid field "${field}" — this is an Azure Logic Apps property, not valid in ASL`, path: `${path}.${field}` });
     }
   }
 

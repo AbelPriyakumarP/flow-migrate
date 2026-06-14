@@ -3,6 +3,27 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
 
+function copyToClipboard(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text: string) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
+
 interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -69,12 +90,24 @@ export default function CodeEditor({
   }, [onChange]);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 2000);
+    copyToClipboard(value); setCopied(true); setTimeout(() => setCopied(false), 2000);
   }, [value]);
 
   const handleDownload = useCallback(() => {
-    const blob = new Blob([value], { type: "application/json" }); const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "migrated-workflow.json"; a.click(); URL.revokeObjectURL(url);
+    try {
+      const blob = new Blob([value], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "migrated-workflow.json";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    } catch {
+      const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(value);
+      window.open(dataUri, "_blank");
+    }
   }, [value]);
 
   const lineCount = value ? value.split("\n").length : 0;

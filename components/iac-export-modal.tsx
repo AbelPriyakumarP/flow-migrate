@@ -3,6 +3,27 @@
 import { useState, useCallback } from "react";
 import type { IaCFormat } from "@/lib/prompts-iac";
 
+function copyToClipboard(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text: string) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
+
 interface IaCExportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -54,7 +75,7 @@ export default function IaCExportModal({
   }, [outputCode, direction, format]);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(content);
+    copyToClipboard(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [content]);
