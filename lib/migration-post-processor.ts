@@ -3287,6 +3287,999 @@ function cat48SecurityHardening(output: Record<string, unknown>): string[] {
   return changes;
 }
 
+// ─── CAT-49: Parallel Graph Preservation ─────────────────────────────────────
+
+function cat49ParallelPreservation(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const def = output.definition as Record<string, unknown> | undefined;
+  if (!def) return changes;
+  const actions = def.actions as Record<string, Record<string, unknown>> | undefined;
+  if (!actions) return changes;
+
+  let sourceParsed: Record<string, unknown>;
+  try {
+    sourceParsed = JSON.parse(sourceStr);
+  } catch {
+    return changes;
+  }
+
+  const states = sourceParsed.States as Record<string, Record<string, unknown>> | undefined;
+  if (!states) return changes;
+
+  // --- Map state → Foreach with explicit concurrency ---
+  for (const [sName, sState] of Object.entries(states)) {
+    if (sState.Type !== "Map") continue;
+    const maxConc = (sState.MaxConcurrency as number) || 0;
+    const foreachCandidates = Object.entries(actions).filter(
+      ([, a]) => a.type === "Foreach"
+    );
+    for (const [aName, action] of foreachCandidates) {
+      const nameNorm = aName.toLowerCase().replace(/[_\-\s]/g, "");
+      const stateNorm = sName.toLowerCase().replace(/[_\-\s]/g, "");
+      if (!nameNorm.includes(stateNorm) && !stateNorm.includes(nameNorm)) continue;
+
+      const rt = (action.runtimeConfiguration as Record<string, unknown>) || {};
+      const conc = rt.concurrency as Record<string, unknown> | undefined;
+      const currentRep = conc?.repetitions as number | undefined;
+
+      if (maxConc > 0 && currentRep !== maxConc) {
+        action.runtimeConfiguration = {
+          ...rt,
+          concurrency: { repetitions: maxConc },
+        };
+        changes.push(
+          `CAT-49: '${aName}' Foreach concurrency set to ${maxConc} (matching source Map state '${sName}' MaxConcurrency)`
+        );
+      } else if (maxConc === 0 && !currentRep) {
+        action.runtimeConfiguration = {
+          ...rt,
+          concurrency: { repetitions: 40 },
+        };
+        changes.push(
+          `CAT-49: '${aName}' Foreach concurrency set to 40 (source Map '${sName}' has unlimited concurrency)`
+        );
+      }
+    }
+  }
+
+  // --- Parallel state → ensure branches have no inter-branch runAfter ---
+  for (const [sName, sState] of Object.entries(states)) {
+    if (sState.Type !== "Parallel") continue;
+    const branches = sState.Branches as Array<Record<string, unknown>> | undefined;
+    if (!branches || branches.length < 2) continue;
+
+    const branchStartStates = branches.map((b) => {
+      const bStates = b.States as Record<string, Record<string, unknown>>;
+      return b.StartAt as string || (bStates ? Object.keys(bStates)[0] : "");
+    }).filter(Boolean);
+
+    const branchActionNames: string[] = [];
+    for (const b of branches) {
+      const bStates = b.States as Record<string, Record<string, unknown>>;
+      if (bStates) branchActionNames.push(...Object.keys(bStates));
+    }
+
+    for (const [aName, action] of Object.entries(actions)) {
+      const nameNorm = aName.toLowerCase().replace(/[_\-\s]/g, "");
+      const isBranchAction = branchStartStates.some((bs) => {
+        const bsNorm = bs.toLowerCase().replace(/[_\-\s]/g, "");
+        return nameNorm.includes(bsNorm) || bsNorm.includes(nameNorm);
+      });
+      if (!isBranchAction) continue;
+
+      const runAfter = action.runAfter as Record<string, unknown> | undefined;
+      if (!runAfter) continue;
+
+      const deps = Object.keys(runAfter);
+      const crossBranchDeps = deps.filter((dep) => {
+        const depNorm = dep.toLowerCase().replace(/[_\-\s]/g, "");
+        return branchActionNames.some((ba) => {
+          const baNorm = ba.toLowerCase().replace(/[_\-\s]/g, "");
+          return depNorm.includes(baNorm) || baNorm.includes(depNorm);
+        });
+      });
+
+      if (crossBranchDeps.length > 0) {
+        for (const dep of crossBranchDeps) {
+          delete (runAfter as Record<string, unknown>)[dep];
+        }
+        if (Object.keys(runAfter).length === 0) {
+          delete action.runAfter;
+        }
+        changes.push(
+          `CAT-49: '${aName}' removed cross-branch runAfter deps [${crossBranchDeps.join(", ")}] to preserve parallel execution from Parallel state '${sName}'`
+        );
+      }
+    }
+  }
+
+  // --- Fan-out/fan-in: ensure Choice fan-out targets stay concurrent ---
+  for (const [sName, sState] of Object.entries(states)) {
+    if (sState.Type !== "Choice") continue;
+    const choices = sState.Choices as Array<Record<string, unknown>> | undefined;
+    if (!choices || choices.length < 2) continue;
+
+    const targets = choices
+      .map((c) => c.Next as string)
+      .filter(Boolean);
+    const defaultTarget = sState.Default as string | undefined;
+    if (defaultTarget) targets.push(defaultTarget);
+
+    if (targets.length < 2) continue;
+
+    const targetActions = targets
+      .map((t) => {
+        const tNorm = t.toLowerCase().replace(/[_\-\s]/g, "");
+        return Object.entries(actions).find(([aName]) => {
+          const aNorm = aName.toLowerCase().replace(/[_\-\s]/g, "");
+          return aNorm.includes(tNorm) || tNorm.includes(aNorm);
+        });
+      })
+      .filter(Boolean) as Array<[string, Record<string, unknown>]>;
+
+    for (let i = 1; i < targetActions.length; i++) {
+      const [aName, action] = targetActions[i];
+      const runAfter = action.runAfter as Record<string, unknown> | undefined;
+      if (!runAfter) continue;
+
+      const siblingDeps = Object.keys(runAfter).filter((dep) =>
+        targetActions.some(([tName]) => tName === dep)
+      );
+
+      if (siblingDeps.length > 0) {
+        for (const dep of siblingDeps) {
+          delete (runAfter as Record<string, unknown>)[dep];
+        }
+        if (Object.keys(runAfter).length === 0) {
+          delete action.runAfter;
+        }
+        changes.push(
+          `CAT-49: '${aName}' removed sibling Choice-target runAfter deps to preserve fan-out from '${sName}'`
+        );
+      }
+    }
+  }
+
+  // --- Ensure all Foreach actions have explicit operationOptions or concurrency ---
+  for (const [aName, action] of Object.entries(actions)) {
+    if (action.type !== "Foreach") continue;
+    const rt = action.runtimeConfiguration as Record<string, unknown> | undefined;
+    const conc = rt?.concurrency as Record<string, unknown> | undefined;
+    const opOpts = action.operationOptions as string | undefined;
+
+    if (!conc?.repetitions && !opOpts) {
+      action.runtimeConfiguration = {
+        ...(rt || {}),
+        concurrency: { repetitions: 20 },
+      };
+      changes.push(
+        `CAT-49: '${aName}' Foreach given default parallel concurrency (repetitions=20) to prevent sequential degradation`
+      );
+    }
+  }
+
+  return changes;
+}
+
+// ─── CAT-50: Silver Layer Transformation Preservation ────────────────────────
+
+function cat50SilverLayerTransforms(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const def = output.definition as Record<string, unknown> | undefined;
+  if (!def) return changes;
+  const actions = def.actions as Record<string, Record<string, unknown>> | undefined;
+  if (!actions) return changes;
+
+  const srcLower = sourceStr.toLowerCase();
+
+  // --- Ensure Databricks notebook tasks preserve transformation parameters ---
+  for (const [aName, action] of Object.entries(actions)) {
+    const body = action.body as Record<string, unknown> | undefined;
+    if (!body) continue;
+
+    // Detect Glue/EMR ETL job references and ensure they map to Databricks notebooks
+    const bodyStr = JSON.stringify(body).toLowerCase();
+    if (!/notebook_task|spark_submit|jar_task/.test(bodyStr)) continue;
+
+    const rsts = body.run_submit_task_settings as Record<string, unknown> | undefined;
+    const tasks = ((body.tasks ?? rsts?.tasks) as Array<Record<string, unknown>> | undefined);
+    if (!tasks) continue;
+
+    for (const task of tasks) {
+      const nbTask = task.notebook_task as Record<string, unknown> | undefined;
+      if (!nbTask) continue;
+      const params = nbTask.base_parameters as Record<string, string> | undefined;
+      if (!params) continue;
+
+      // Schema standardization: ensure column mapping params exist
+      if (/transform|etl|silver|cleanse|clean|enrich/i.test(aName) || /transform|silver/i.test(JSON.stringify(params))) {
+        if (!params.LAYER && !params.layer) {
+          params.LAYER = "silver";
+          changes.push(`CAT-50: '${aName}' notebook task tagged with LAYER=silver`);
+        }
+        if (!params.OUTPUT_FORMAT && !params.output_format) {
+          params.OUTPUT_FORMAT = "delta";
+          changes.push(`CAT-50: '${aName}' notebook task set OUTPUT_FORMAT=delta for Silver layer`);
+        }
+        if (!params.WRITE_MODE && !params.write_mode) {
+          params.WRITE_MODE = "merge";
+          changes.push(`CAT-50: '${aName}' notebook task set WRITE_MODE=merge for idempotent Silver writes`);
+        }
+      }
+
+      // PII masking: detect PII-related params and ensure masking flag
+      const paramStr = JSON.stringify(params).toLowerCase();
+      if (/pii|mask|anonymi|redact|gdpr|hipaa/.test(paramStr)) {
+        if (!params.PII_MASKING_ENABLED) {
+          params.PII_MASKING_ENABLED = "true";
+          changes.push(`CAT-50: '${aName}' PII masking explicitly enabled`);
+        }
+      }
+
+      // Deduplication: ensure dedup strategy is specified
+      if (/dedup|deduplicate|unique|distinct|merge/.test(paramStr)) {
+        if (!params.DEDUP_STRATEGY) {
+          params.DEDUP_STRATEGY = "row_number";
+          changes.push(`CAT-50: '${aName}' deduplication strategy set to row_number`);
+        }
+      }
+    }
+  }
+
+  // --- Ensure data quality validation actions exist after transformation actions ---
+  const transformActions: string[] = [];
+  const qualityActions: string[] = [];
+
+  for (const [aName, action] of Object.entries(actions)) {
+    const aNameLower = aName.toLowerCase();
+    if (/transform|etl|silver|cleanse|enrich|process/i.test(aNameLower)) {
+      transformActions.push(aName);
+    }
+    if (/validat|quality|check|audit|verify/i.test(aNameLower)) {
+      qualityActions.push(aName);
+    }
+  }
+
+  if (transformActions.length > 0 && qualityActions.length === 0 && srcLower.includes("valid")) {
+    changes.push(
+      `CAT-50: Source has validation logic but no quality check actions found in target — consider adding data quality gates after Silver transforms [${transformActions.join(", ")}]`
+    );
+  }
+
+  // --- Ensure timestamp standardization in Function/HTTP actions ---
+  for (const [aName, action] of Object.entries(actions)) {
+    if (action.type !== "Function" && action.type !== "Http") continue;
+    const body = action.body as Record<string, unknown> | undefined;
+    if (!body) continue;
+    const bodyStr = JSON.stringify(body);
+
+    if (/timezone|time_zone|tz_offset|local_time/i.test(bodyStr) && !/utc|UTC/.test(bodyStr)) {
+      changes.push(
+        `CAT-50: '${aName}' references timezone but does not normalize to UTC — Silver layer data should use UTC timestamps`
+      );
+    }
+  }
+
+  // --- Ensure schema evolution is handled for Silver table writes ---
+  for (const [aName, action] of Object.entries(actions)) {
+    const bodyStr = JSON.stringify(action.body || {}).toLowerCase();
+    if (/delta|silver|write.*table|save.*table/.test(bodyStr)) {
+      if (!/overwriteschema|mergeschema|schema.*evolution/.test(bodyStr)) {
+        changes.push(
+          `CAT-50: '${aName}' writes to Silver table but does not specify schema evolution strategy (overwriteSchema/mergeSchema)`
+        );
+      }
+    }
+  }
+
+  return changes;
+}
+
+// ─── CAT-51: Gold Layer Analytics Preservation ──────────────────────────────
+
+function cat51GoldLayerPreservation(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const def = output.definition as Record<string, unknown> | undefined;
+  if (!def) return changes;
+  const actions = def.actions as Record<string, Record<string, unknown>> | undefined;
+  if (!actions) return changes;
+
+  const srcLower = sourceStr.toLowerCase();
+
+  // --- Ensure aggregation notebook tasks have Gold layer params ---
+  for (const [aName, action] of Object.entries(actions)) {
+    const body = action.body as Record<string, unknown> | undefined;
+    if (!body) continue;
+    const bodyStr = JSON.stringify(body).toLowerCase();
+    if (!/notebook_task|spark_submit/.test(bodyStr)) continue;
+
+    const rsts = body.run_submit_task_settings as Record<string, unknown> | undefined;
+    const tasks = ((body.tasks ?? rsts?.tasks) as Array<Record<string, unknown>> | undefined);
+    if (!tasks) continue;
+
+    for (const task of tasks) {
+      const nbTask = task.notebook_task as Record<string, unknown> | undefined;
+      if (!nbTask) continue;
+      const params = nbTask.base_parameters as Record<string, string> | undefined;
+      if (!params) continue;
+
+      const aNameLower = aName.toLowerCase();
+      const paramStr = JSON.stringify(params).toLowerCase();
+
+      if (/gold|aggregat|kpi|metric|report|dashboard|analytics|scorecard/i.test(aNameLower) ||
+          /gold|aggregat|kpi|metric|report/i.test(paramStr)) {
+
+        if (!params.LAYER && !params.layer) {
+          params.LAYER = "gold";
+          changes.push(`CAT-51: '${aName}' notebook task tagged with LAYER=gold`);
+        }
+        if (!params.OUTPUT_FORMAT && !params.output_format) {
+          params.OUTPUT_FORMAT = "delta";
+          changes.push(`CAT-51: '${aName}' set OUTPUT_FORMAT=delta for Gold layer`);
+        }
+        if (!params.OPTIMIZE_ZORDER && !params.optimize_zorder) {
+          params.OPTIMIZE_ZORDER = "true";
+          changes.push(`CAT-51: '${aName}' enabled ZORDER optimization for Gold reporting tables`);
+        }
+      }
+    }
+  }
+
+  // --- Ensure Gold actions that aggregate depend on Silver actions ---
+  const silverActions: string[] = [];
+  const goldActions: string[] = [];
+
+  for (const [aName] of Object.entries(actions)) {
+    const n = aName.toLowerCase();
+    if (/silver|cleanse|transform|etl_process|enrich/i.test(n)) silverActions.push(aName);
+    if (/gold|aggregat|kpi|metric|report|dashboard|scorecard/i.test(n)) goldActions.push(aName);
+  }
+
+  for (const gName of goldActions) {
+    const gAction = actions[gName];
+    const runAfter = gAction.runAfter as Record<string, unknown> | undefined;
+    const currentDeps = runAfter ? Object.keys(runAfter) : [];
+
+    const hasSilverDep = currentDeps.some((dep) =>
+      silverActions.some((s) => s === dep)
+    );
+
+    if (!hasSilverDep && silverActions.length > 0) {
+      changes.push(
+        `CAT-51: Gold action '${gName}' has no dependency on Silver actions [${silverActions.join(", ")}] — verify data pipeline ordering`
+      );
+    }
+  }
+
+  // --- Ensure reporting actions produce optimized output ---
+  for (const [aName, action] of Object.entries(actions)) {
+    if (!/report|dashboard|mart|summary|scorecard/i.test(aName.toLowerCase())) continue;
+
+    const body = action.body as Record<string, unknown> | undefined;
+    if (!body) continue;
+    const bodyStr = JSON.stringify(body);
+
+    if (/write|save|output/i.test(bodyStr) && !/partition|zorder|cluster|bucket/i.test(bodyStr)) {
+      changes.push(
+        `CAT-51: Reporting action '${aName}' writes data but does not specify partitioning or ZORDER — Gold tables should be optimized for query performance`
+      );
+    }
+  }
+
+  // --- Warn if source has aggregation logic but target lacks Gold actions ---
+  const hasSourceAgg = /GROUP\s+BY|ROLLUP|CUBE|SUM\s*\(|AVG\s*\(|COUNT\s*\(/i.test(srcLower);
+  if (hasSourceAgg && goldActions.length === 0) {
+    changes.push(
+      "CAT-51: Source workflow contains aggregation/KPI logic but no Gold layer actions detected in target — business calculations may have been lost"
+    );
+  }
+
+  return changes;
+}
+
+// ─── CAT-52: Synchronization & Completion Preservation ──────────────────────
+
+function cat52SyncPreservation(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const def = output.definition as Record<string, unknown> | undefined;
+  if (!def) return changes;
+  const actions = def.actions as Record<string, Record<string, unknown>> | undefined;
+  if (!actions) return changes;
+
+  let sourceParsed: Record<string, unknown>;
+  try {
+    sourceParsed = JSON.parse(sourceStr);
+  } catch {
+    return changes;
+  }
+
+  const states = sourceParsed.States as Record<string, Record<string, unknown>> | undefined;
+
+  // --- Detect .sync integrations in source and ensure target has polling ---
+  if (states) {
+    for (const [sName, sState] of Object.entries(states)) {
+      if (sState.Type !== "Task") continue;
+      const resource = sState.Resource as string | undefined;
+      if (!resource) continue;
+
+      const isSyncIntegration = resource.endsWith(".sync");
+      const isWaitForToken = resource.endsWith(".waitForTaskToken");
+      const timeoutSec = sState.TimeoutSeconds as number | undefined;
+      const heartbeatSec = sState.HeartbeatSeconds as number | undefined;
+
+      if (!isSyncIntegration && !isWaitForToken) continue;
+
+      // Find matching target action
+      const sNorm = sName.toLowerCase().replace(/[_\-\s]/g, "");
+      const matchedActions = Object.entries(actions).filter(([aName]) => {
+        const aNorm = aName.toLowerCase().replace(/[_\-\s]/g, "");
+        return aNorm.includes(sNorm) || sNorm.includes(aNorm);
+      });
+
+      for (const [aName, action] of matchedActions) {
+        // Ensure Until polling loop exists for .sync tasks
+        if (isSyncIntegration && action.type !== "Until") {
+          const hasUntilChild = Object.entries(actions).some(([n, a]) =>
+            a.type === "Until" && n.toLowerCase().includes(sNorm)
+          );
+
+          if (!hasUntilChild) {
+            changes.push(
+              `CAT-52: Source task '${sName}' uses .sync (blocking) but target '${aName}' has no Until polling loop — downstream actions may execute before completion`
+            );
+          }
+        }
+
+        // Ensure timeout is preserved
+        if (timeoutSec) {
+          if (action.type === "Until") {
+            const limit = action.limit as Record<string, unknown> | undefined;
+            if (!limit?.timeout) {
+              action.limit = {
+                ...(limit || {}),
+                timeout: `PT${Math.ceil(timeoutSec / 60)}M`,
+              };
+              changes.push(
+                `CAT-52: '${aName}' Until loop timeout set to PT${Math.ceil(timeoutSec / 60)}M (matching source TimeoutSeconds=${timeoutSec})`
+              );
+            }
+          } else {
+            const rt = action.runtimeConfiguration as Record<string, unknown> | undefined;
+            if (!rt?.actionTimeout) {
+              action.runtimeConfiguration = {
+                ...(rt || {}),
+                actionTimeout: `PT${Math.ceil(timeoutSec / 60)}M`,
+              };
+              changes.push(
+                `CAT-52: '${aName}' action timeout set to PT${Math.ceil(timeoutSec / 60)}M (matching source TimeoutSeconds=${timeoutSec})`
+              );
+            }
+          }
+        }
+
+        // Ensure heartbeat maps to polling interval
+        if (heartbeatSec && action.type === "Until") {
+          const untilActions = action.actions as Record<string, Record<string, unknown>> | undefined;
+          if (untilActions) {
+            const hasDelay = Object.values(untilActions).some((a) => a.type === "Wait");
+            if (!hasDelay) {
+              changes.push(
+                `CAT-52: '${aName}' Until loop has no delay between polls — source HeartbeatSeconds=${heartbeatSec} suggests ${heartbeatSec}s polling interval`
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // --- Detect Wait states and ensure target has equivalent delays ---
+    for (const [sName, sState] of Object.entries(states)) {
+      if (sState.Type !== "Wait") continue;
+      const waitSeconds = sState.Seconds as number | undefined;
+      const sNorm = sName.toLowerCase().replace(/[_\-\s]/g, "");
+
+      const hasTargetWait = Object.entries(actions).some(([aName, a]) => {
+        const aNorm = aName.toLowerCase().replace(/[_\-\s]/g, "");
+        return (aNorm.includes(sNorm) || sNorm.includes(aNorm)) && a.type === "Wait";
+      });
+
+      if (!hasTargetWait && waitSeconds) {
+        changes.push(
+          `CAT-52: Source Wait state '${sName}' (${waitSeconds}s) has no matching Delay action in target — execution timing will differ`
+        );
+      }
+    }
+  }
+
+  // --- Ensure runAfter chains preserve execution order ---
+  const actionNames = Object.keys(actions);
+  for (let i = 0; i < actionNames.length; i++) {
+    const aName = actionNames[i];
+    const action = actions[aName];
+    const runAfter = action.runAfter as Record<string, unknown> | undefined;
+
+    if (!runAfter && i > 0) {
+      // Root-level action with no runAfter (except the first) — might be unintentionally parallel
+      const isIntentionallyParallel = action.type === "If" || action.type === "Switch";
+      if (!isIntentionallyParallel) {
+        // Check if this action is referenced in another action's runAfter
+        const isReferencedAsParallel = Object.entries(actions).some(([, otherAction]) => {
+          const otherRunAfter = otherAction.runAfter as Record<string, unknown> | undefined;
+          return otherRunAfter && Object.keys(otherRunAfter).includes(aName);
+        });
+
+        if (!isReferencedAsParallel) {
+          changes.push(
+            `CAT-52: Action '${aName}' has no runAfter dependency — verify it should execute in parallel with root actions, not sequentially`
+          );
+        }
+      }
+    }
+
+    // Verify runAfter targets exist
+    if (runAfter) {
+      for (const dep of Object.keys(runAfter)) {
+        if (!actions[dep]) {
+          changes.push(
+            `CAT-52: Action '${aName}' depends on '${dep}' via runAfter, but '${dep}' does not exist — broken dependency chain`
+          );
+        }
+      }
+    }
+  }
+
+  // --- Ensure long-running HTTP calls have proper async handling ---
+  for (const [aName, action] of Object.entries(actions)) {
+    if (action.type !== "Http") continue;
+    const inputs = action.inputs as Record<string, unknown> | undefined;
+    if (!inputs) continue;
+
+    const method = (inputs.method as string || "").toUpperCase();
+    const uri = (inputs.uri as string || "").toLowerCase();
+
+    // POST to job/run/submit endpoints are likely long-running
+    if (method === "POST" && /\/(?:jobs|runs|submit|execute|trigger|start|pipelines)/i.test(uri)) {
+      const opOpts = action.operationOptions as string | undefined;
+      if (opOpts === "DisableAsyncPattern") continue; // Already synchronous
+
+      // Check if there's a follow-up polling action
+      const hasPolling = Object.entries(actions).some(([n, a]) => {
+        return a.type === "Until" && (a.runAfter as Record<string, unknown> | undefined)?.[aName];
+      });
+
+      if (!hasPolling) {
+        changes.push(
+          `CAT-52: HTTP POST '${aName}' targets a job submission endpoint but has no follow-up polling — downstream actions may execute before the job completes`
+        );
+      }
+    }
+  }
+
+  // --- Ensure Retry policies exist on critical actions ---
+  for (const [aName, action] of Object.entries(actions)) {
+    if (action.type !== "Http" && action.type !== "Function") continue;
+    const inputs = action.inputs as Record<string, unknown> | undefined;
+    if (!inputs) continue;
+
+    const retryPolicy = (inputs as Record<string, unknown>).retryPolicy as Record<string, unknown> | undefined;
+    if (!retryPolicy) {
+      const rt = action.runtimeConfiguration as Record<string, unknown> | undefined;
+      const rtRetry = rt?.retryPolicy as Record<string, unknown> | undefined;
+      if (!rtRetry) {
+        // Check if source had retry
+        const srcHasRetry = sourceStr.includes('"Retry"') || sourceStr.includes('"retryPolicy"');
+        if (srcHasRetry) {
+          changes.push(
+            `CAT-52: Action '${aName}' (${action.type}) has no retry policy but source workflow uses retries — add retryPolicy to preserve fault tolerance`
+          );
+        }
+      }
+    }
+  }
+
+  return changes;
+}
+
+// ─── CAT-53: Platform Dependency Replacement ────────────────────────────────
+
+const PLATFORM_REPLACEMENTS: [RegExp, string, string][] = [
+  [/\bAWS\s+Lambda\b/gi, "Azure Functions", "service"],
+  [/\bAWS::Lambda\b/g, "Microsoft.Web/sites", "service"],
+  [/\blambda:InvokeFunction\b/gi, "Microsoft.Web/sites/functions/invoke", "service"],
+  [/\bAmazon\s+SQS\b/gi, "Azure Service Bus Queue", "service"],
+  [/\bsqs:SendMessage\b/gi, "serviceBus:sendMessage", "service"],
+  [/\bAmazon\s+SNS\b/gi, "Azure Service Bus Topic", "service"],
+  [/\bsns:Publish\b/gi, "serviceBusTopic:publish", "service"],
+  [/\bAmazon\s+DynamoDB\b/gi, "Azure Cosmos DB", "service"],
+  [/\bdynamodb:(?:PutItem|GetItem|UpdateItem|DeleteItem|Query|Scan)\b/gi, "cosmosDB:$&", "service"],
+  [/\bAmazon\s+S3\b/gi, "Azure Data Lake Storage", "storage"],
+  [/\bs3:(?:GetObject|PutObject|DeleteObject|ListBucket)\b/gi, "adls:$&", "storage"],
+  [/\barn:aws:s3:::/g, "https://{storageAccountName}.blob.core.windows.net/", "storage"],
+  [/\barn:aws:lambda:[a-z0-9-]+:\d+:function:/g, "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Web/sites/{appName}/functions/", "service"],
+  [/\barn:aws:sqs:[a-z0-9-]+:\d+:/g, "sb://{serviceBusNamespace}.servicebus.windows.net/", "service"],
+  [/\barn:aws:sns:[a-z0-9-]+:\d+:/g, "sb://{serviceBusNamespace}.servicebus.windows.net/topics/", "service"],
+  [/\barn:aws:dynamodb:[a-z0-9-]+:\d+:table\//g, "https://{cosmosAccountName}.documents.azure.com/dbs/{databaseName}/colls/", "service"],
+  [/\bAWS\s+Glue\b/gi, "Azure Data Factory / Unity Catalog", "catalog"],
+  [/\bglue:(?:StartCrawler|StartJobRun|GetCrawler|GetJobRun)\b/gi, "adf:$&", "catalog"],
+  [/\bAmazon\s+CloudWatch\b/gi, "Azure Monitor", "monitoring"],
+  [/\bcloudwatch:PutMetricData\b/gi, "azureMonitor:postMetrics", "monitoring"],
+  [/\bAWS\s+X-Ray\b/gi, "Azure Application Insights", "monitoring"],
+  [/\bAmazon\s+SES\b/gi, "Azure Communication Services", "notification"],
+  [/\bses:SendEmail\b/gi, "communicationServices:sendEmail", "notification"],
+  [/\bAmazon\s+QuickSight\b/gi, "Power BI", "dashboard"],
+  [/\bquicksight:CreateDataSet\b/gi, "powerBI:createDataset", "dashboard"],
+  [/\bAWS\s+KMS\b/gi, "Azure Key Vault", "service"],
+  [/\bkms:(?:Encrypt|Decrypt|GenerateDataKey)\b/gi, "keyVault:$&", "service"],
+  [/\bAmazon\s+Kinesis\b/gi, "Azure Event Hubs", "service"],
+  [/\bkinesis:PutRecord\b/gi, "eventHubs:sendEvent", "service"],
+  [/\bAWS\s+Step\s+Functions\b/gi, "Azure Logic Apps", "service"],
+  [/\bstates:StartExecution\b/gi, "logicApps:triggerRun", "service"],
+];
+
+function cat53PlatformDependencyReplacement(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  let json = JSON.stringify(output, null, 2);
+  let replacementCount = 0;
+
+  for (const [pattern, replacement] of PLATFORM_REPLACEMENTS) {
+    const matches = json.match(pattern);
+    if (matches && matches.length > 0) {
+      json = json.replace(pattern, replacement);
+      replacementCount += matches.length;
+      changes.push(
+        `CAT-53: Replaced ${matches.length}× '${matches[0]}' → '${replacement}'`
+      );
+    }
+  }
+
+  if (replacementCount > 0) {
+    try {
+      const patched = JSON.parse(json) as Record<string, unknown>;
+      Object.assign(output, patched);
+    } catch {
+      changes.push("CAT-53: WARNING — replacement produced invalid JSON; reverting");
+      return changes.filter((c) => c.includes("WARNING"));
+    }
+  }
+
+  // Residual scan — flag anything that still looks like AWS
+  const residualPatterns = [
+    /\barn:aws:[a-z0-9-]+/gi,
+    /\bAWS::[A-Z][a-zA-Z]+/g,
+    /\b(?:lambda|sqs|sns|dynamodb|s3|glue|cloudwatch|kinesis|ses|quicksight|kms):(?:[A-Z][a-zA-Z]+)\b/g,
+  ];
+
+  const finalJson = JSON.stringify(output);
+  for (const rp of residualPatterns) {
+    const residuals = finalJson.match(rp);
+    if (residuals) {
+      const unique = [...new Set(residuals)];
+      for (const r of unique.slice(0, 5)) {
+        changes.push(
+          `CAT-53: Residual AWS reference found after replacement: '${r}' — manual review recommended`
+        );
+      }
+    }
+  }
+
+  return changes;
+}
+
+// ─── CAT-54: Semantic Migration Integrity ────────────────────────────────────
+
+function cat54SemanticMigrationIntegrity(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const outStr = JSON.stringify(output, null, 2);
+
+  // --- Business logic preservation ---
+  const srcBizPatterns = [
+    { re: /CASE\s+WHEN/gi, label: "CASE/WHEN" },
+    { re: /SUM\s*\(|AVG\s*\(|COUNT\s*\(/gi, label: "Aggregation" },
+    { re: /GROUP\s+BY/gi, label: "GROUP BY" },
+    { re: /JOIN\b/gi, label: "JOIN" },
+    { re: /WHERE\b/gi, label: "WHERE" },
+  ];
+  for (const { re, label } of srcBizPatterns) {
+    const srcCount = (sourceStr.match(re) || []).length;
+    const outCount = (outStr.match(re) || []).length;
+    if (srcCount > 0 && outCount === 0) {
+      changes.push(`CAT-54: Business logic pattern '${label}' found ${srcCount}× in source but missing from target — verify preservation`);
+    }
+  }
+
+  // --- Execution dependency chain validation ---
+  const def = output.definition as Record<string, unknown> | undefined;
+  const actions = (def?.actions ?? {}) as Record<string, Record<string, unknown>>;
+  const actionNames = new Set(Object.keys(actions));
+  for (const [aName, action] of Object.entries(actions)) {
+    const ra = action.runAfter as Record<string, unknown> | undefined;
+    if (!ra) continue;
+    for (const dep of Object.keys(ra)) {
+      if (!actionNames.has(dep)) {
+        changes.push(`CAT-54: Action '${aName}' depends on '${dep}' via runAfter but '${dep}' does not exist — broken dependency chain`);
+      }
+    }
+  }
+
+  // --- Error handling parity ---
+  const srcRetries = (sourceStr.match(/"Retry"\s*:\s*\[|"retryPolicy"\s*:/g) || []).length;
+  const outRetries = (outStr.match(/"retryPolicy"\s*:/g) || []).length;
+  if (srcRetries > 0 && outRetries < srcRetries) {
+    changes.push(`CAT-54: Source has ${srcRetries} retry definitions but target has ${outRetries} — ${srcRetries - outRetries} retry policies may be lost`);
+  }
+
+  const srcCatch = (sourceStr.match(/"Catch"\s*:/g) || []).length;
+  const outRunAfterFailed = (outStr.match(/"Failed"/g) || []).length;
+  if (srcCatch > 0 && outRunAfterFailed === 0) {
+    changes.push(`CAT-54: Source has ${srcCatch} Catch blocks but target has no runAfter Failed handlers — error handling gap`);
+  }
+
+  // --- Monitoring preservation ---
+  const srcMonitoring = [
+    { re: /CloudWatch|PutMetricData/gi, label: "CloudWatch" },
+    { re: /X-Ray|tracing/gi, label: "X-Ray tracing" },
+    { re: /PutLogEvents/gi, label: "Logging" },
+    { re: /Alarm|metric.*alert/gi, label: "Alerting" },
+  ];
+  for (const { re, label } of srcMonitoring) {
+    if (re.test(sourceStr) && !/Monitor|Insights|diagnosticSettings|trackedProperties/i.test(outStr)) {
+      changes.push(`CAT-54: Source uses ${label} but target lacks Azure monitoring equivalent — add Azure Monitor / App Insights instrumentation`);
+    }
+  }
+
+  // --- Notification preservation ---
+  if (/SNS|SES|ses:Send|sns:Publish/i.test(sourceStr)) {
+    if (!/ServiceBus|Communication.*Services|sendEmail|serviceBusTopic/i.test(outStr)) {
+      changes.push("CAT-54: Source uses AWS notification services (SNS/SES) but target lacks Azure equivalents — add Service Bus Topics / Communication Services");
+    }
+  }
+
+  // --- Validation checkpoint detection ---
+  const srcValidations = (sourceStr.match(/"Type"\s*:\s*"Choice"|"condition"/gi) || []).length;
+  const outValidations = (outStr.match(/"type"\s*:\s*"If"|"type"\s*:\s*"Switch"/gi) || []).length;
+  if (srcValidations > 0 && outValidations < srcValidations) {
+    changes.push(`CAT-54: Source has ${srcValidations} validation checkpoints (Choice/condition) but target has only ${outValidations} — ${srcValidations - outValidations} validation gate(s) may be lost`);
+  }
+
+  // --- Cloud-native modernization check ---
+  if (!/ManagedServiceIdentity/i.test(outStr)) {
+    changes.push("CAT-54: Target does not use ManagedServiceIdentity — modernize authentication to zero-secret model");
+  }
+
+  if (!/parameters\s*\(/i.test(outStr) && !/\$connections/i.test(outStr)) {
+    changes.push("CAT-54: Target does not externalize configuration via parameters() — add ARM parameter references for environment portability");
+  }
+
+  return changes;
+}
+
+// ─── CAT-55: Production Silver Layer Enforcement ─────────────────────────────
+
+function cat55ProductionSilverEnforcement(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const outStr = JSON.stringify(output, null, 2);
+
+  // Databricks notebook actions should have LAYER tags
+  const def = output.definition as Record<string, unknown> | undefined;
+  const actions = (def?.actions ?? {}) as Record<string, Record<string, unknown>>;
+
+  for (const [aName, action] of Object.entries(actions)) {
+    if (action.type !== "DatabricksNotebook" && action.type !== "DatabricksSparkJar") continue;
+    const inputs = action.inputs as Record<string, unknown> | undefined;
+    if (!inputs) continue;
+
+    const baseParams = (inputs.baseParameters ?? inputs.parameters ?? {}) as Record<string, unknown>;
+
+    // Silver layer should have LAYER=silver
+    const isSilver = /silver/i.test(aName) || /silver/i.test(String(baseParams.LAYER ?? ""));
+    if (!isSilver) continue;
+
+    // Must have audit tracking
+    if (!baseParams.AUDIT_TABLE && !baseParams.audit_table) {
+      changes.push(
+        `CAT-55: Silver notebook '${aName}' missing AUDIT_TABLE parameter — add audit framework for input/output/rejected record tracking`
+      );
+    }
+
+    // Must write Delta format
+    if (!baseParams.OUTPUT_FORMAT || String(baseParams.OUTPUT_FORMAT).toLowerCase() !== "delta") {
+      if (!baseParams.OUTPUT_FORMAT) {
+        const bp = baseParams as Record<string, string>;
+        bp.OUTPUT_FORMAT = "delta";
+        changes.push(`CAT-55: Set OUTPUT_FORMAT=delta on Silver notebook '${aName}' for ACID guarantees`);
+      }
+    }
+
+    // Must have merge keys for incremental processing
+    if (!baseParams.MERGE_KEYS && !baseParams.merge_keys) {
+      changes.push(
+        `CAT-55: Silver notebook '${aName}' missing MERGE_KEYS parameter — add merge keys for idempotent Delta merge`
+      );
+    }
+
+    // Must have error handling / quarantine
+    if (!baseParams.QUARANTINE_TABLE && !baseParams.quarantine_table) {
+      changes.push(
+        `CAT-55: Silver notebook '${aName}' missing QUARANTINE_TABLE parameter — failed records must be isolated, not silently dropped`
+      );
+    }
+
+    // Should have schema validation enabled
+    if (!baseParams.SCHEMA_VALIDATION && !baseParams.schema_validation) {
+      const bp = baseParams as Record<string, string>;
+      bp.SCHEMA_VALIDATION = "true";
+      changes.push(`CAT-55: Enabled SCHEMA_VALIDATION=true on Silver notebook '${aName}' for drift detection`);
+    }
+  }
+
+  // Check for deduplication in source — must be preserved
+  const srcHasDedup = /dropDuplicates|drop_duplicates|DISTINCT|ROW_NUMBER.*OVER/i.test(sourceStr);
+  if (srcHasDedup) {
+    const outHasDedup = /dropDuplicates|drop_duplicates|DISTINCT|ROW_NUMBER|MERGE\s+INTO|deduplicate/i.test(outStr);
+    if (!outHasDedup) {
+      changes.push("CAT-55: Source has deduplication logic but target Silver pipeline does not — duplicate records will propagate to Gold layer");
+    }
+  }
+
+  // Check for retry/error handling in Silver operations
+  const silverActions = Object.entries(actions).filter(([name]) => /silver/i.test(name));
+  for (const [aName, action] of silverActions) {
+    const inputs = action.inputs as Record<string, unknown> | undefined;
+    const runtimeConfig = action.runtimeConfiguration as Record<string, unknown> | undefined;
+    const hasRetry = inputs?.retryPolicy || runtimeConfig?.retryPolicy;
+    if (!hasRetry) {
+      changes.push(
+        `CAT-55: Silver action '${aName}' has no retry policy — transient failures will cause full pipeline failure instead of graceful retry`
+      );
+    }
+  }
+
+  return changes;
+}
+
+// ─── CAT-56: Production Gold Layer Enforcement ───────────────────────────────
+
+function cat56ProductionGoldEnforcement(
+  output: Record<string, unknown>,
+  sourceStr: string
+): string[] {
+  const changes: string[] = [];
+  const outStr = JSON.stringify(output);
+
+  const definition = output.definition as Record<string, unknown> | undefined;
+  const actions = (definition?.actions ?? {}) as Record<string, Record<string, unknown>>;
+
+  // Find Gold Databricks notebook actions
+  const goldNotebooks = Object.entries(actions).filter(
+    ([name, action]) =>
+      /gold/i.test(name) &&
+      (action.type === "DatabricksNotebook" ||
+        action.type === "DatabricksSparkJar" ||
+        (typeof action.type === "string" && /databricks/i.test(action.type)))
+  );
+
+  for (const [aName, action] of goldNotebooks) {
+    const inputs = (action.inputs ?? {}) as Record<string, unknown>;
+    const baseParams = (inputs.baseParameters ?? inputs.parameters ?? {}) as Record<string, unknown>;
+
+    // Must write Delta format for ACID guarantees
+    if (!baseParams.OUTPUT_FORMAT || String(baseParams.OUTPUT_FORMAT).toLowerCase() !== "delta") {
+      if (!baseParams.OUTPUT_FORMAT) {
+        const bp = baseParams as Record<string, string>;
+        bp.OUTPUT_FORMAT = "delta";
+        changes.push(`CAT-56: Set OUTPUT_FORMAT=delta on Gold notebook '${aName}' for ACID guarantees and time-travel`);
+      }
+    }
+
+    // Must have refresh schedule for dashboard freshness
+    if (!baseParams.REFRESH_SCHEDULE && !baseParams.refresh_schedule) {
+      const bp = baseParams as Record<string, string>;
+      bp.REFRESH_SCHEDULE = "0 */4 * * *";
+      changes.push(`CAT-56: Set REFRESH_SCHEDULE on Gold notebook '${aName}' — dashboard consumers need predictable refresh cadence`);
+    }
+
+    // Must have audit table for metric lineage
+    if (!baseParams.AUDIT_TABLE && !baseParams.audit_table) {
+      changes.push(
+        `CAT-56: Gold notebook '${aName}' missing AUDIT_TABLE parameter — add audit framework for metric lineage, snapshots, and refresh logging`
+      );
+    }
+
+    // Must have Z-ORDER columns for query performance
+    if (!baseParams.ZORDER_COLUMNS && !baseParams.zorder_columns) {
+      changes.push(
+        `CAT-56: Gold notebook '${aName}' missing ZORDER_COLUMNS parameter — time-dimension clustering is critical for Power BI DirectQuery performance`
+      );
+    }
+
+    // Should have data quality checks enabled
+    if (!baseParams.DQ_CHECKS_ENABLED && !baseParams.dq_checks_enabled) {
+      const bp = baseParams as Record<string, string>;
+      bp.DQ_CHECKS_ENABLED = "true";
+      changes.push(`CAT-56: Enabled DQ_CHECKS_ENABLED=true on Gold notebook '${aName}' for null-rate, outlier, and trend-break monitoring`);
+    }
+
+    // Should have metric validation thresholds
+    if (!baseParams.VALIDATION_THRESHOLDS && !baseParams.validation_thresholds) {
+      changes.push(
+        `CAT-56: Gold notebook '${aName}' missing VALIDATION_THRESHOLDS parameter — add range/trend/anomaly thresholds for automated metric validation`
+      );
+    }
+  }
+
+  // Verify KPI aggregation patterns are preserved from source
+  const srcHasKPI = /SUM\s*\(|AVG\s*\(|COUNT\s*\(\s*DISTINCT/i.test(sourceStr);
+  if (srcHasKPI) {
+    const outHasKPI = /SUM\s*\(|AVG\s*\(|COUNT\s*\(\s*DISTINCT|\.agg\s*\(/i.test(outStr);
+    if (!outHasKPI) {
+      changes.push("CAT-56: Source contains KPI aggregation patterns (SUM/AVG/COUNT DISTINCT) but target Gold pipeline does not — business metrics will be lost");
+    }
+  }
+
+  // Verify window functions are preserved
+  const srcHasWindow = /OVER\s*\(|LAG\s*\(|LEAD\s*\(|NTILE\s*\(|ROW_NUMBER\s*\(/i.test(sourceStr);
+  if (srcHasWindow) {
+    const outHasWindow = /OVER\s*\(|LAG\s*\(|LEAD\s*\(|NTILE\s*\(|ROW_NUMBER\s*\(/i.test(outStr);
+    if (!outHasWindow) {
+      changes.push("CAT-56: Source uses window functions (OVER/LAG/LEAD/NTILE/ROW_NUMBER) but target Gold layer does not — period-over-period and ranking calculations will be missing");
+    }
+  }
+
+  // Verify GROUP BY / ROLLUP patterns are preserved
+  const srcHasRollup = /ROLLUP|CUBE|GROUPING\s+SETS/i.test(sourceStr);
+  if (srcHasRollup) {
+    const outHasRollup = /ROLLUP|CUBE|GROUPING\s+SETS|GROUPING_ID/i.test(outStr);
+    if (!outHasRollup) {
+      changes.push("CAT-56: Source uses ROLLUP/CUBE/GROUPING SETS for multi-level aggregation but target does not — hierarchical aggregates will be flattened");
+    }
+  }
+
+  // Check for Power BI / reporting view creation
+  const srcHasReporting = /CREATE\s+(?:OR\s+REPLACE\s+)?(?:VIEW|MATERIALIZED\s+VIEW)|power_?bi|quicksight|dashboard/i.test(sourceStr);
+  if (srcHasReporting) {
+    const outHasReporting = /CREATE\s+(?:OR\s+REPLACE\s+)?(?:VIEW|MATERIALIZED\s+VIEW)|power_?bi|OPTIMIZE.*ZORDER/i.test(outStr);
+    if (!outHasReporting) {
+      changes.push("CAT-56: Source has reporting view/dashboard definitions but target Gold layer has no materialized views — executive dashboards will have no optimized data source");
+    }
+  }
+
+  // Check Gold actions have retry policies
+  const goldActions = Object.entries(actions).filter(([name]) => /gold/i.test(name));
+  for (const [aName, action] of goldActions) {
+    const inputs = action.inputs as Record<string, unknown> | undefined;
+    const runtimeConfig = action.runtimeConfiguration as Record<string, unknown> | undefined;
+    const hasRetry = inputs?.retryPolicy || runtimeConfig?.retryPolicy;
+    if (!hasRetry) {
+      changes.push(
+        `CAT-56: Gold action '${aName}' has no retry policy — transient failures during KPI calculation will cause full analytics pipeline failure`
+      );
+    }
+  }
+
+  return changes;
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export function applyMigrationPostProcessing(
@@ -3355,6 +4348,14 @@ export function applyMigrationPostProcessing(
   run("CAT-46", cat46PreDeploymentValidation(output));
   run("CAT-47", cat47RollbackPlan(output));
   run("CAT-48", cat48SecurityHardening(output));
+  run("CAT-49", cat49ParallelPreservation(output, sourceStr));
+  run("CAT-50", cat50SilverLayerTransforms(output, sourceStr));
+  run("CAT-51", cat51GoldLayerPreservation(output, sourceStr));
+  run("CAT-52", cat52SyncPreservation(output, sourceStr));
+  run("CAT-53", cat53PlatformDependencyReplacement(output, sourceStr));
+  run("CAT-54", cat54SemanticMigrationIntegrity(output, sourceStr));
+  run("CAT-55", cat55ProductionSilverEnforcement(output, sourceStr));
+  run("CAT-56", cat56ProductionGoldEnforcement(output, sourceStr));
 
   return { output, changesApplied: allChanges };
 }
