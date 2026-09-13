@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { IAC_SYSTEM_PROMPT, getIaCPrompt, getIaCFilename, type IaCFormat } from "@/lib/prompts-iac";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-
 export async function POST(request: NextRequest) {
   try {
     if (!process.env.GEMINI_API_KEY) {
@@ -12,6 +10,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const body = await request.json();
     const { workflowJson, direction, format } = body as {

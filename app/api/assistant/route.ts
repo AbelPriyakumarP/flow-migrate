@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-
 const ASSISTANT_SYSTEM = `You are FlowMigrate AI Assistant — an expert in AWS Step Functions (ASL) and Azure Logic Apps migration.
 
 Your role:
@@ -27,6 +25,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const { message, context } = (await request.json()) as {
       message: string;

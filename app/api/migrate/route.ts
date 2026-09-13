@@ -10,8 +10,6 @@ import { detectApplicableMappings, PRODUCTION_ASSESSMENT_30 } from "@/lib/servic
 import { sanitizeWorkflowPii, restorePiiFromPlaceholders } from "@/lib/pii-sanitizer";
 import { sanitizeAiJson } from "@/lib/sanitize-json";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-
 export async function POST(request: NextRequest) {
   try {
     if (!process.env.GEMINI_API_KEY) {
@@ -20,6 +18,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const body = await request.json();
     const { sourceCode, targetPlatform, corrections } = body as {

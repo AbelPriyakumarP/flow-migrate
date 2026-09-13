@@ -3,8 +3,6 @@ import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_PROMPT, DOCUMENT_ANALYSIS_PROMPT } from "@/lib/prompts";
 import { detectPlatform } from "@/lib/detect-platform";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-
 async function extractText(
   mimeType: string,
   fileData: string
@@ -54,6 +52,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const { mimeType, fileData, fileName } = (await request.json()) as {
       mimeType: string;
